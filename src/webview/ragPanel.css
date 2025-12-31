@@ -20,22 +20,33 @@ body {
     box-sizing: border-box;
 }
 
+/* Enhanced VS Code CSS variable integration for both Cursor IDE and VS Code */
 body.dark {
     --primary-color: #FF6B35;
     --secondary-color: #6C757D;
     --user-bubble-bg: #FF6B35;
-    --assistant-bubble-bg: #2D2D30;
-    --text-color: #CCCCCC;
-    --border-color: #3E3E42;
+    --assistant-bubble-bg: var(--vscode-editor-background, #2D2D30);
+    --text-color: var(--vscode-foreground, #CCCCCC);
+    --border-color: var(--vscode-panel-border, #3E3E42);
+    --input-bg: var(--vscode-input-background, #3C3C3C);
+    --input-fg: var(--vscode-input-foreground, #CCCCCC);
+    --button-bg: var(--vscode-button-background, #0E639C);
+    --button-fg: var(--vscode-button-foreground, #FFFFFF);
+    --button-hover-bg: var(--vscode-button-hoverBackground, #1177BB);
 }
 
 body.light {
     --primary-color: #FF6B35;
     --secondary-color: #6C757D;
     --user-bubble-bg: #FF6B35;
-    --assistant-bubble-bg: #FFFFFF;
-    --text-color: #333333;
-    --border-color: #E0E0E0;
+    --assistant-bubble-bg: var(--vscode-editor-background, #FFFFFF);
+    --text-color: var(--vscode-foreground, #333333);
+    --border-color: var(--vscode-panel-border, #E0E0E0);
+    --input-bg: var(--vscode-input-background, #FFFFFF);
+    --input-fg: var(--vscode-input-foreground, #333333);
+    --button-bg: var(--vscode-button-background, #007ACC);
+    --button-fg: var(--vscode-button-foreground, #FFFFFF);
+    --button-hover-bg: var(--vscode-button-hoverBackground, #005A9E);
 }
 
 .container {
@@ -238,14 +249,21 @@ body.light {
     align-items: flex-start;
 }
 
+.input-wrapper {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
 .query-input {
     flex: 1;
-    padding: 12px 16px;
+    padding: 12px 48px 12px 16px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     font-size: 14px;
-    background-color: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
+    background-color: var(--input-bg);
+    color: var(--input-fg);
     font-family: inherit;
 }
 
@@ -259,10 +277,81 @@ body.light {
     cursor: not-allowed;
 }
 
-.button-stack {
+.btn-icon {
+    position: absolute;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+    background-color: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+    color: var(--vscode-foreground);
+    padding: 0;
+    z-index: 10;
+}
+
+.btn-icon:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground, rgba(255, 255, 255, 0.2));
+}
+
+.btn-icon:active:not(:disabled) {
+    opacity: 0.8;
+}
+
+.btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-submit {
+    background-color: var(--button-bg, var(--vscode-button-background, var(--primary-color)));
+    color: var(--button-fg, var(--vscode-button-foreground, white));
+}
+
+.btn-submit:hover:not(:disabled) {
+    background-color: var(--button-hover-bg, var(--vscode-button-hoverBackground, var(--primary-color)));
+    color: var(--button-fg, var(--vscode-button-foreground, white));
+    opacity: 0.9;
+}
+
+.btn-stop {
+    background-color: var(--vscode-errorForeground, #dc3545);
+    color: white;
+}
+
+body.dark .btn-stop {
+    background-color: var(--vscode-errorForeground, #f48771);
+    color: white;
+}
+
+body.light .btn-stop {
+    background-color: var(--vscode-errorForeground, #dc3545);
+    color: white;
+}
+
+.btn-stop:hover:not(:disabled) {
+    background-color: var(--vscode-errorForeground, #c82333);
+    color: white;
+    opacity: 0.9;
+}
+
+body.dark .btn-stop:hover:not(:disabled) {
+    background-color: var(--vscode-errorForeground, #e06c5c);
+}
+
+body.light .btn-stop:hover:not(:disabled) {
+    background-color: var(--vscode-errorForeground, #c82333);
+}
+
+.btn-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 
 .btn {
@@ -298,17 +387,6 @@ body.light {
 .btn-secondary {
     background-color: var(--secondary-color);
     color: white;
-}
-
-.btn-stop {
-    background-color: #dc3545;
-    color: white;
-}
-
-.btn-stop:hover:not(:disabled) {
-    background-color: #c82333;
-    opacity: 0.9;
-    transform: translateY(-1px);
 }
 
 /* Example Questions */
@@ -488,8 +566,8 @@ body.light {
     border-radius: 6px;
     font-size: 13px;
     font-family: inherit;
-    background-color: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
+    background-color: var(--input-bg);
+    color: var(--input-fg);
 }
 
 .form-textarea {
@@ -536,5 +614,67 @@ body.light {
 
 .chat-container::-webkit-scrollbar-thumb:hover {
     background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* Thinking Animation (Cursor IDE style) */
+.thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 13px;
+}
+
+.thinking-dots {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.thinking-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--vscode-descriptionForeground);
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+    opacity: 0.4;
+}
+
+.thinking-dot:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes thinking-pulse {
+    0%, 100% {
+        opacity: 0.4;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.2);
+    }
+}
+
+.thinking-message {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: flex-start;
+}
+
+.thinking-bubble {
+    background-color: var(--assistant-bubble-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 12px 16px;
+    max-width: 75%;
 }
 

@@ -269,14 +269,15 @@ export class Generator {
     }
 
     private async checkOllamaHealth(timeoutMs: number): Promise<boolean> {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
             const resp = await fetch(`${this.ollamaUrl}/api/tags`, { method: 'GET', signal: controller.signal });
-            clearTimeout(timer);
             return resp.ok;
         } catch {
             return false;
+        } finally {
+            clearTimeout(timer);
         }
     }
 

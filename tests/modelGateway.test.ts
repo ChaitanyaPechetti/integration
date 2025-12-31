@@ -69,5 +69,40 @@ describe('ModelGateway', () => {
     mg.scorer.score = jest.fn();
     await expect(mg.process({ context: 'c', query: 'q' })).rejects.toThrow(/timed out/);
   });
+
+  it('withTimeout should reject on timeout', async () => {
+    const mg = new ModelGateway(new TestOutput()) as any;
+    jest.useFakeTimers();
+    
+    const promise = new Promise(resolve => setTimeout(() => resolve('success'), 1000));
+    const timeoutPromise = mg.withTimeout(promise, 100);
+    
+    jest.advanceTimersByTime(100);
+    
+    await expect(timeoutPromise).rejects.toThrow(/timed out/);
+    jest.useRealTimers();
+  });
+
+  it('should not retry on rate limit errors', async () => {
+    const mg = new ModelGateway(new TestOutput()) as any;
+    mg.rateLimiter = { requests: [], maxRequests: 10, windowMs: 60_000 };
+    mg.withTimeout = jest.fn((p: Promise<any>) => p);
+    mg.generator.generate = jest.fn().mockRejectedValue(new Error('Rate limit exceeded'));
+    mg.scorer.score = jest.fn();
+    
+    await expect(mg.process({ context: 'c', query: 'q' })).rejects.toThrow(/Rate limit/);
+    expect(mg.generator.generate).toHaveBeenCalledTimes(1); // Should not retry
+  });
+
+  it('should not retry on invalid errors', async () => {
+    const mg = new ModelGateway(new TestOutput()) as any;
+    mg.rateLimiter = { requests: [], maxRequests: 10, windowMs: 60_000 };
+    mg.withTimeout = jest.fn((p: Promise<any>) => p);
+    mg.generator.generate = jest.fn().mockRejectedValue(new Error('Invalid request'));
+    mg.scorer.score = jest.fn();
+    
+    await expect(mg.process({ context: 'c', query: 'q' })).rejects.toThrow(/Invalid/);
+    expect(mg.generator.generate).toHaveBeenCalledTimes(1); // Should not retry
+  });
 });
 

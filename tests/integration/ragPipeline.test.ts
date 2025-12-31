@@ -16,7 +16,30 @@ import { WebSearch } from '../../src/backend/web/webSearch';
 import * as vscode from 'vscode';
 
 // Mock vscode module
-jest.mock('vscode');
+jest.mock('vscode', () => ({
+    workspace: {
+        getConfiguration: jest.fn((_section?: string) => ({
+            get: jest.fn((_key: string, defaultValue?: any) => {
+                const defaults: Record<string, any> = {
+                    cacheSize: 500,
+                    cacheTTL: 300,
+                    topK: 5,
+                    similarityThreshold: 0.7
+                };
+                return defaults[_key] ?? defaultValue;
+            })
+        })),
+        onDidChangeConfiguration: jest.fn(() => ({ dispose: jest.fn() }))
+    },
+    window: {
+        createOutputChannel: jest.fn(() => ({
+            appendLine: jest.fn(),
+            show: jest.fn(),
+            clear: jest.fn(),
+            dispose: jest.fn()
+        }))
+    }
+}));
 
 describe('RAG Pipeline Integration Tests', () => {
     let cacheManager: CacheManager;
@@ -127,11 +150,11 @@ describe('RAG Pipeline Integration Tests', () => {
             );
             expect(context).toContain('TypeScript');
             expect(context).toContain('Internal Knowledge');
-            expect(context).toContain('Web Results');
+            expect(context).toContain('Web Snippets');
         });
 
         it('should include chat history in context', () => {
-            const chatHistory = [
+            const chatHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [
                 { role: 'user', content: 'What is JavaScript?', timestamp: Date.now() },
                 { role: 'assistant', content: 'JavaScript is a programming language', timestamp: Date.now() }
             ];
@@ -149,7 +172,7 @@ describe('RAG Pipeline Integration Tests', () => {
     describe('Retriever', () => {
         it('should retrieve internal documents', async () => {
             // Add a document to external memory
-            await externalMemory.addDocument({
+            await externalMemory.storeDocument({
                 id: 'test-doc',
                 content: 'Test document content',
                 metadata: {},

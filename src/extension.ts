@@ -71,12 +71,18 @@ const REPO_ANALYSIS_DEBOUNCE_MS = 2000;
 const REPO_ANALYSIS_THROTTLE_MS = 10000;
 
 export function activate(context: vscode.ExtensionContext) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/c47a3d23-afbb-4cc7-9310-d8092e7a1878',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:73',message:'activate function entry',data:{workspaceFolders:vscode.workspace.workspaceFolders?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     console.log('RAG Agent extension is now active');
 
     // Store extension context for use in other functions
     extensionContext = context;
 
     // Initialize utilities
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/c47a3d23-afbb-4cc7-9310-d8092e7a1878',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:80',message:'before initializing utilities',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     cacheManager = new CacheManager(context);
     outputChannel = new OutputChannel();
     diagnostics = vscode.languages.createDiagnosticCollection('ragAgentLint');
@@ -103,11 +109,17 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // Create status bar item
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/c47a3d23-afbb-4cc7-9310-d8092e7a1878',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:105',message:'before creating status bar item',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'rag.openPanel';
     statusBarItem.text = '$(database) RAG: Ready';
-    statusBarItem.tooltip = 'RAG Inventory Management Assistant - Click to open';
+    statusBarItem.tooltip = 'Zeroui Ai Agent - Click to open';
     statusBarItem.show();
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/c47a3d23-afbb-4cc7-9310-d8092e7a1878',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:110',message:'after showing status bar item',data:{statusBarItemText:statusBarItem.text},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     context.subscriptions.push(statusBarItem);
 
     // Update status bar function
@@ -211,6 +223,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Repo analysis temporarily disabled
 
     outputChannel.logInfo('RAG Agent extension activated');
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/c47a3d23-afbb-4cc7-9310-d8092e7a1878',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'extension.ts:213',message:'activate function exit - extension fully activated',data:{statusBarItemCreated:!!statusBarItem},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 }
 
 function setupContinuousErrorMonitoring(context: vscode.ExtensionContext) {

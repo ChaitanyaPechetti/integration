@@ -415,6 +415,26 @@ export class RAGPanel {
         // Listen for when the panel is disposed
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
+        // Listen for theme changes and update webview accordingly
+        vscode.window.onDidChangeActiveColorTheme(() => {
+            const config = vscode.workspace.getConfiguration('ragAgent');
+            const themePreference = config.get<string>('theme', 'auto');
+            
+            // Only update if theme preference is 'auto' (follows IDE theme)
+            if (themePreference === 'auto') {
+                this._update();
+                this.outputChannel.logInfo('Theme updated to match IDE');
+            }
+        }, null, this._disposables);
+
+        // Listen for configuration changes (when user changes ragAgent.theme setting)
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('ragAgent.theme')) {
+                this._update();
+                this.outputChannel.logInfo('Theme preference changed, webview updated');
+            }
+        }, null, this._disposables);
+
         // Handle messages from the webview
         this._panel.webview.onDidReceiveMessage(
             async (message) => {
@@ -484,7 +504,7 @@ export class RAGPanel {
         // Otherwise, create a new panel on the right side
         const panel = vscode.window.createWebviewPanel(
             RAGPanel.viewType,
-            'RAG Inventory Management Assistant',
+            'Zeroui Ai Agent',
             column,
             {
                 enableScripts: true,
@@ -1526,6 +1546,24 @@ export class RAGPanel {
         this._panel.webview.html = this._getHtmlForWebview(webview);
     }
 
+    private _getThemeClass(): string {
+        const config = vscode.workspace.getConfiguration('ragAgent');
+        const themePreference = config.get<string>('theme', 'auto');
+        
+        // If theme preference is explicitly set to light or dark, use it
+        if (themePreference === 'light') {
+            return 'light';
+        }
+        if (themePreference === 'dark') {
+            return 'dark';
+        }
+        
+        // Otherwise, auto-detect from IDE theme (works for both Cursor IDE and VS Code)
+        const theme = vscode.window.activeColorTheme.kind;
+        const isDark = theme === vscode.ColorThemeKind.Dark || theme === vscode.ColorThemeKind.HighContrast;
+        return isDark ? 'dark' : 'light';
+    }
+
     private _getHtmlForWebview(webview: vscode.Webview) {
         // Get paths to resources
         const scriptUri = webview.asWebviewUri(
@@ -1535,9 +1573,8 @@ export class RAGPanel {
             vscode.Uri.joinPath(this._extensionUri, 'media', 'ragPanel.css')
         );
 
-        // Get theme
-        const theme = vscode.window.activeColorTheme.kind;
-        const isDark = theme === vscode.ColorThemeKind.Dark || theme === vscode.ColorThemeKind.HighContrast;
+        // Get theme (respects ragAgent.theme setting)
+        const themeClass = this._getThemeClass();
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -1545,17 +1582,16 @@ export class RAGPanel {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="${styleUri}" rel="stylesheet">
-    <title>RAG Inventory Management Assistant</title>
+    <title>Zeroui Ai Agent</title>
 </head>
-<body class="${isDark ? 'dark' : 'light'}">
+<body class="${themeClass}">
     <div class="container">
         <!-- Header Section -->
         <header class="header">
             <div class="header-left">
                 <span class="header-icon">📦</span>
                 <div class="header-text">
-                    <h1 class="header-title">RAG Inventory Management Assistant</h1>
-                    <p class="header-subtitle">Protected by custom input guardrails & enhanced with intelligent caching</p>
+                    <h1 class="header-title">Zeroui Ai Agent</h1>
                 </div>
             </div>
             <div class="header-actions">
@@ -1581,18 +1617,26 @@ export class RAGPanel {
         <!-- Input Area -->
         <div class="input-area">
             <div class="input-container">
-                <input 
-                    type="text" 
-                    id="queryInput" 
-                    class="query-input" 
-                    placeholder="e.g., 'Should I reorder toothpaste?'"
-                    maxlength="500"
-                />
-                <div class="button-stack">
-                    <button id="submitBtn" class="btn btn-primary">Submit</button>
-                    <button id="stopBtn" class="btn btn-stop" style="display: none;">Stop</button>
-                    <button id="clearChatBtn" class="btn btn-secondary">Clear Chat</button>
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="queryInput" 
+                        class="query-input" 
+                        placeholder="e.g., 'Should I reorder toothpaste?'"
+                        maxlength="500"
+                    />
+                    <button id="submitBtn" class="btn-icon btn-submit" title="Submit">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M1.5 1.5L14.5 8L1.5 14.5V9.5L10.5 8L1.5 6.5V1.5Z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button id="stopBtn" class="btn-icon btn-stop" style="display: none;" title="Stop">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/>
+                        </svg>
+                    </button>
                 </div>
+                <button id="clearChatBtn" class="btn btn-secondary">Clear Chat</button>
             </div>
         </div>
 

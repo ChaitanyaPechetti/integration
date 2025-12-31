@@ -4,6 +4,7 @@
     // State management
     let chatHistory = [];
     let lastLintUpdate = {}; // Track last lint update per file to prevent duplicates
+    let thinkingIndicator = null;
     let cacheStats = {
         size: 0,
         maxSize: 500,
@@ -161,9 +162,12 @@
         queryInput.value = '';
         queryInput.disabled = true;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Processing...';
-        stopBtn.style.display = 'block';
+        submitBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
         stopBtn.disabled = false;
+
+        // Show thinking indicator
+        showThinkingIndicator();
 
         // Send query to extension
         vscode.postMessage({
@@ -172,9 +176,48 @@
         });
     }
 
+    function showThinkingIndicator() {
+        // Remove existing thinking indicator if any
+        removeThinkingIndicator();
+        
+        const thinkingDiv = document.createElement('div');
+        thinkingDiv.className = 'message thinking-message';
+        thinkingDiv.id = 'thinkingIndicator';
+        
+        thinkingDiv.innerHTML = `
+            <div class="message-bubble thinking-bubble">
+                <div class="thinking-indicator">
+                    <div class="thinking-dots">
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        chatContainer.appendChild(thinkingDiv);
+        thinkingIndicator = thinkingDiv;
+        
+        // Auto-scroll to bottom
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function removeThinkingIndicator() {
+        if (thinkingIndicator) {
+            thinkingIndicator.remove();
+            thinkingIndicator = null;
+        } else {
+            // Fallback: try to find and remove by ID
+            const existing = document.getElementById('thinkingIndicator');
+            if (existing) {
+                existing.remove();
+            }
+        }
+    }
+
     function handleStop() {
         stopBtn.disabled = true;
-        stopBtn.textContent = 'Stopping...';
         vscode.postMessage({
             type: 'stop'
         });
@@ -376,30 +419,30 @@
 
         switch (message.type) {
             case 'response':
+                removeThinkingIndicator();
                 addMessage('assistant', message.response, message.cached, message.sources || []);
                 queryInput.disabled = false;
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Submit';
+                submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                stopBtn.textContent = 'Stop';
                 break;
 
             case 'error':
+                removeThinkingIndicator();
                 addMessage('assistant', `Error: ${message.message}`);
                 queryInput.disabled = false;
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Submit';
+                submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                stopBtn.textContent = 'Stop';
                 break;
 
             case 'stopped':
+                removeThinkingIndicator();
                 addMessage('assistant', message.message || 'Query processing stopped');
                 queryInput.disabled = false;
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Submit';
+                submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                stopBtn.textContent = 'Stop';
                 break;
 
             case 'cacheStatsUpdate':

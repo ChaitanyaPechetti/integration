@@ -39,5 +39,20 @@ describe('OutputGuardrail', () => {
     expect(res.isValid).toBe(false);
     expect(res.needsRegeneration).toBe(true);
   });
+
+  it('shouldRegenerate returns true when needsRegeneration is true', () => {
+    const check = { isValid: false, needsRegeneration: true };
+    expect(guard.shouldRegenerate(check)).toBe(true);
+  });
+
+  it('shouldRegenerate returns false when needsRegeneration is false', () => {
+    const check = { isValid: true, needsRegeneration: false };
+    expect(guard.shouldRegenerate(check)).toBe(false);
+  });
+
+  it('shouldRegenerate returns false when needsRegeneration is undefined', () => {
+    const check = { isValid: true };
+    expect(guard.shouldRegenerate(check)).toBe(false);
+  });
 });
 
