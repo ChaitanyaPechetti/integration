@@ -1,0 +1,16 @@
+{
+    "python.defaultInterpreterPath": "C:\\Users\\user\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/rag-agent-server"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticMode": "workspace",
+    "files.associations": {
+        "**/rag-agent-server/**/*.py": "python"
+    },
+    "ragAgent.googleApiKey": "AIzaSyBf57C0gNKrrPSj6_ca4UDn0LQoOAhR7W8",
+    "ragAgent.googleCseId": "73cf9050a00e54311",
+    "ragAgent.enableWebSearch": true
+}
+

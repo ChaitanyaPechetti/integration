@@ -1,0 +1,220 @@
+{
+  "name": "rag-inventory-assistant",
+  "displayName": "RAG Inventory Management Assistant",
+  "description": "Retrieval-Augmented Generation agent for inventory management queries",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:rag.openPanel",
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rag.openPanel",
+        "title": "Open RAG Agent",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.closePanel",
+        "title": "Close RAG Agent",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.clearCache",
+        "title": "Clear Cache",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.refreshCacheStats",
+        "title": "Refresh Cache Statistics",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.showStatus",
+        "title": "Show Status",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.showOutput",
+        "title": "Show Output",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.showProblems",
+        "title": "Show Problems",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.openSettings",
+        "title": "Open Settings",
+        "category": "RAG Agent"
+      }
+    ],
+    "configuration": {
+      "title": "RAG Agent",
+      "properties": {
+        "ragAgent.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama server URL (default: http://localhost:11434)",
+          "scope": "application"
+        },
+        "ragAgent.model": {
+          "type": "string",
+          "default": "tinyllama",
+          "enum": [
+            "tinyllama",
+            "phi-2",
+            "llama2",
+            "mistral",
+            "codellama"
+          ],
+          "description": "Ollama model to use for generation",
+          "scope": "application"
+        },
+        "ragAgent.googleApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Custom Search API key (kept local; not sent to UI)",
+          "scope": "application"
+        },
+        "ragAgent.googleCseId": {
+          "type": "string",
+          "default": "",
+          "description": "Google Custom Search Engine ID (cx)",
+          "scope": "application"
+        },
+        "ragAgent.enableWebSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Google web search in retrieval pipeline",
+          "scope": "application"
+        },
+        "ragAgent.cacheSize": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum cache entries",
+          "scope": "application"
+        },
+        "ragAgent.cacheTTL": {
+          "type": "number",
+          "default": 300,
+          "description": "Cache TTL in seconds",
+          "scope": "application"
+        },
+        "ragAgent.topK": {
+          "type": "number",
+          "default": 5,
+          "description": "Number of documents to retrieve",
+          "scope": "application"
+        },
+        "ragAgent.similarityThreshold": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Similarity threshold for retrieval",
+          "scope": "application"
+        },
+        "ragAgent.theme": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "description": "Theme preference (auto follows IDE theme)",
+          "scope": "application"
+        },
+        "ragAgent.useZerouiBackend": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Zeroui FastAPI backend instead of direct Ollama connection",
+          "scope": "application"
+        },
+        "ragAgent.gatewayTimeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Model gateway timeout in milliseconds",
+          "scope": "application"
+        },
+        "ragAgent.gatewayMaxRetries": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of retries for model gateway requests",
+          "scope": "application"
+        },
+        "ragAgent.gatewayRetryDelay": {
+          "type": "number",
+          "default": 1000,
+          "description": "Initial retry delay in milliseconds (exponential backoff)",
+          "scope": "application"
+        },
+        "ragAgent.gatewayRateLimitMaxRequests": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum number of requests allowed in the rate limit window",
+          "scope": "application"
+        },
+        "ragAgent.gatewayRateLimitWindow": {
+          "type": "number",
+          "default": 60000,
+          "description": "Rate limit window in milliseconds",
+          "scope": "application"
+        },
+        "ragAgent.zerouiEndpoint": {
+          "type": "string",
+          "default": "http://localhost:8001",
+          "description": "FastAPI server endpoint URL (handles Ollama communication). Set FASTAPI_PORT env var to customize.",
+          "scope": "application"
+        },
+        "ragAgent.zerouiModel": {
+          "type": "string",
+          "default": "phi3:mini-128k",
+          "description": "Ollama model name used by Zeroui backend.",
+          "scope": "application"
+        },
+        "ragAgent.zerouiContextMaxFiles": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum number of files to include in Zeroui context ingestion.",
+          "scope": "application"
+        },
+        "ragAgent.zerouiAutoStartServers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start FastAPI and Ollama servers on extension activation.",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./ && npm run copy-media",
+    "copy-media": "node scripts/copy-media.js",
+    "watch": "tsc -watch -p ./",
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "@types/jest": "^29.5.12",
+    "node-fetch": "^2.6.12",
+    "@types/node-fetch": "^2.6.4"
+  },
+  "dependencies": {}
+}
+
