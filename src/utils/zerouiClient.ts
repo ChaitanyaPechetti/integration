@@ -67,9 +67,9 @@ export class ZerouiClient {
             const fetchStart = Date.now();
             fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'zerouiClient.ts:62',message:'before fetch to zeroui',data:{url:`${this.baseUrl}/api/chat`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
             // #endregion
-            // Add timeout to fetch call using AbortController (25s timeout to be less than gateway timeout)
+            // Add timeout to fetch call using AbortController (55s timeout to be less than gateway timeout of 60s)
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 25000);
+            const timeoutId = setTimeout(() => controller.abort(), 55000);
             let response: Response;
             try {
                 response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -82,7 +82,7 @@ export class ZerouiClient {
             } catch (fetchErr: any) {
                 clearTimeout(timeoutId);
                 if (fetchErr.name === 'AbortError') {
-                    throw new Error(`FastAPI request timed out after 25 seconds. The server may be slow or unresponsive.`);
+                    throw new Error(`FastAPI request timed out after 55 seconds. The server may be slow or unresponsive.`);
                 }
                 throw fetchErr;
             }

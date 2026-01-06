@@ -34,7 +34,8 @@ export class ModelGateway {
         this.output = output;
         
         // Load gateway controls from configuration
-        this.timeout = config.get<number>('gatewayTimeout', 30000); // 30 seconds default
+        // Use longer timeout for large models (180s default, configurable)
+        this.timeout = config.get<number>('gatewayTimeout', 180000); // 180 seconds default (3 minutes for large models like phi3:mini-128k)
         this.maxRetries = config.get<number>('gatewayMaxRetries', 3);
         this.retryDelay = config.get<number>('gatewayRetryDelay', 1000); // 1 second default
         
@@ -95,7 +96,16 @@ export class ModelGateway {
         // Force tinyllama for RCA queries
         const modelOverride = isRcaQuery ? 'tinyllama' : undefined;
         const route = this.router.selectModel(modelOverride);
-        this.output.logInfo(`Routing to model: ${route.model}${isRcaQuery ? ' (RCA mode)' : ''}`);
+        
+        // Adjust timeout based on model size (large models need more time)
+        const modelLower = route.model.toLowerCase();
+        const isLargeModel = modelLower.includes('phi3') && modelLower.includes('128k') || 
+                            modelLower.includes('qwen2.5') || 
+                            modelLower.includes('deepseek') ||
+                            modelLower.includes('llama3');
+        const effectiveTimeout = isLargeModel ? Math.max(this.timeout, 180000) : this.timeout; // At least 180s (3 min) for large models
+        
+        this.output.logInfo(`Routing to model: ${route.model}${isRcaQuery ? ' (RCA mode)' : ''} [timeout: ${effectiveTimeout}ms]`);
 
         let lastError: Error | null = null;
         
@@ -114,9 +124,10 @@ export class ModelGateway {
                 fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'modelGateway.ts:109',message:'before withTimeout',data:{attempt:attempt+1,model:route.model,timeout:this.timeout},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
                 // #endregion
                 // Execute with timeout, pass model from router
+                // Use effective timeout (longer for large models)
                 const genResult = await this.withTimeout(
                     this.generator.generate(request, route.model),
-                    this.timeout
+                    effectiveTimeout
                 );
                 // #region agent log
                 const genEndTime = Date.now();
