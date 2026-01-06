@@ -187,6 +187,7 @@
         thinkingDiv.innerHTML = `
             <div class="message-bubble thinking-bubble">
                 <div class="thinking-indicator">
+                    <span class="thinking-text">zeroui thinking</span>
                     <div class="thinking-dots">
                         <div class="thinking-dot"></div>
                         <div class="thinking-dot"></div>
@@ -245,7 +246,7 @@
         });
     }
 
-    function addMessage(role, content, cached = false, sources = []) {
+    function addMessage(role, content, cached = false, sources = [], model = null) {
         // Prevent duplicate messages - check if the last message is the same
         if (chatHistory.length > 0) {
             const lastMessage = chatHistory[chatHistory.length - 1];
@@ -254,7 +255,7 @@
                 return;
             }
         }
-        chatHistory.push({ role, content, cached, sources });
+        chatHistory.push({ role, content, cached, sources, model });
         renderChat();
     }
 
@@ -280,12 +281,14 @@
                 `;
             } else {
                 const cacheIndicator = msg.cached ? '<span class="cache-indicator">⚡ Cached</span>' : '';
+                const modelIndicator = msg.model ? `<span class="model-indicator">Model: ${escapeHtml(msg.model)}</span>` : '';
                 const sourcesHtml = renderSources(msg.sources);
                 messageDiv.innerHTML = `
                     <div class="message-bubble assistant-bubble">
                         <div class="message-label">Inventory Assistant</div>
                         <div class="message-text">${formatResponse(msg.content)}</div>
                         ${cacheIndicator}
+                        ${modelIndicator}
                         ${sourcesHtml}
                         <button class="copy-btn" onclick="copyToClipboard(${index})" title="Copy response">
                             📋
@@ -420,7 +423,7 @@
         switch (message.type) {
             case 'response':
                 removeThinkingIndicator();
-                addMessage('assistant', message.response, message.cached, message.sources || []);
+                addMessage('assistant', message.response, message.cached, message.sources || [], message.model || null);
                 queryInput.disabled = false;
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';

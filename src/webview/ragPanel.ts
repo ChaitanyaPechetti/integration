@@ -660,7 +660,8 @@ export class RAGPanel {
                 file: fileName,
                 rcaResponse: rcaResponseText,
                 sources: formattedSources,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                model: rcaResult?.model || null
             });
             
             this.outputChannel.logInfo(`[Auto-RCA] Completed RCA for ${fileName}`);
@@ -836,7 +837,8 @@ export class RAGPanel {
                 type: 'response',
                 response: codebaseRcaResponse,
                 cached: false,
-                sources: formattedSources
+                sources: formattedSources,
+                model: rcaResult?.model || null
             });
             
             this.observability.recordLatency('codebase_rca_processing', elapsedMs);
@@ -1240,7 +1242,8 @@ export class RAGPanel {
                     type: 'response',
                     response: rcaResponseText,
                     cached: false,
-                    sources: formattedSources
+                    sources: formattedSources,
+                    model: rcaResult?.model || null
                 });
                 
                 this.observability.recordLatency('rca_query_processing', elapsedMs);
@@ -1430,7 +1433,8 @@ export class RAGPanel {
                 type: 'response',
                 response: responseText,
                 cached: false,
-                sources: formattedSources
+                sources: formattedSources,
+                model: gatewayResult.model
             });
 
             this.observability.recordLatency('query_processing', elapsedMs);
