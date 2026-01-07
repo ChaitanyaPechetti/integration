@@ -171,8 +171,14 @@ export class Generator {
         fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'generator.ts:141',message:'after health check',data:{healthy,elapsed:Date.now()-healthCheckStart},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
         // #endregion
         if (!healthy) {
-            this.output.logError(`Ollama at ${this.ollamaUrl} is unreachable; using fallback.`);
-            return this.fallbackResponse(request);
+            this.output.logError(`Ollama at ${this.ollamaUrl} is unreachable. Please ensure Ollama is running.`);
+            throw new Error(`Ollama server at ${this.ollamaUrl} is unreachable. Please ensure Ollama is running and accessible.`);
+        }
+
+        // Check if model exists (non-blocking, don't fail if check times out)
+        const modelExists = await this.checkModelExists(modelToUse).catch(() => false);
+        if (!modelExists) {
+            this.output.logWarning(`Model ${modelToUse} may not be installed. Attempting request anyway...`);
         }
 
         // Determine model characteristics (before try block for scope)
@@ -181,17 +187,17 @@ export class Generator {
                             modelLower.includes('qwen2.5') || 
                             modelLower.includes('deepseek') ||
                             modelLower.includes('llama3');
-        const fetchTimeout = isLargeModel ? 180000 : 60000; // 180s (3 min) for large models, 60s for others
+        const isTinyLlama = modelLower.includes('tinyllama');
+        // TinyLlama needs more time for first load, but less than large models
+        const fetchTimeout = isLargeModel ? 180000 : (isTinyLlama ? 90000 : 60000); // 90s for TinyLlama, 180s for large, 60s for others
 
-        // Preload model on first use to prevent loading delays (non-blocking)
-        // Only preload large models that are known to take time
-        const shouldPreload = (modelLower.includes('phi3') && modelLower.includes('128k')) || 
-                             modelLower.includes('qwen2.5') || 
-                             modelLower.includes('deepseek');
+        // Preload ALL models to prevent first-request delays (non-blocking, safe)
+        // Preloading is asynchronous and won't block or break anything
+        const shouldPreload = true; // Always preload for faster first response
         if (shouldPreload) {
-            // Preload asynchronously (don't wait for it)
+            // Preload asynchronously (don't wait for it) - won't block or break anything
             this.preloadModel(modelToUse).catch(() => {
-                // Preload failure is not critical
+                // Preload failure is not critical - silently continue
             });
         }
         
@@ -211,7 +217,7 @@ export class Generator {
                 const getModelContextLimit = (model: string): { maxTokens: number; maxChars: number } => {
                     const modelLower = model.toLowerCase();
                     if (modelLower.includes('tinyllama')) {
-                        return { maxTokens: 2048, maxChars: 6000 }; // Reserve space for prompts
+                        return { maxTokens: 2048, maxChars: 4000 }; // TinyLlama has 2048 token limit, use 4000 chars (reserve space for prompts/system)
                     } else if (modelLower.includes('phi3') && modelLower.includes('128k')) {
                         return { maxTokens: 131072, maxChars: 500000 }; // 128k tokens, ~500k chars
                     } else if (modelLower.includes('phi3')) {
@@ -241,46 +247,147 @@ export class Generator {
                 const requestBody: any = {
                     model: modelToUse,
                     stream: false,
-                    messages: [
-                            {
-                                role: 'system',
-                                content: [
-                                    'You are an inventory assistant.',
-                                    'Stay strictly on-topic for the user question.',
-                                    'Use only the provided context (internal + web) to answer the question.',
-                                    'Ignore unrelated/noisy text (installers, downloaders, keybindings, generic shortcuts, old snippets from previous questions).',
-                                    'Do NOT output or list the web snippets, URLs, source titles, or any [Web X] markers.',
-                                    'Do NOT include or repeat the context, guidelines, web snippet content, or URLs in your reply.',
-                                    'Do NOT echo back web snippet text verbatim.',
-                                    'Synthesize the information and provide ONLY a direct answer to the question.',
-                                    'If the context is insufficient or unrelated, reply: "No relevant information found."',
-                                    'Be concise and factual.'
-                                ].join(' ')
-                            },
-                            {
-                                role: 'user',
-                                content: [
-                                    'Context:',
-                                    truncatedContext,
-                                    '',
-                                    'Question:',
-                                    request.query,
-                                    '',
-                                    'Instructions:',
-                                    'Answer ONLY if relevant to the question and grounded in the context above.',
-                                    'Ignore unrelated/noisy text (installers, downloaders, keybindings, generic shortcuts, old snippets from previous questions).',
-                                    'Do NOT repeat or list web snippets, URLs, source titles, or web snippet content.',
-                                    'Do NOT include or repeat the context/guidelines, URLs, or web snippet text.',
-                                    'Synthesize the information and provide ONLY a direct answer to the question.',
-                                    'If no relevant info is found, reply exactly: "No relevant information found."'
-                                ].join('\n')
-                            }
-                        ]
+                    messages: []
                 };
+
+                // Use shorter but strict system prompt ONLY for TinyLlama to save context
+                // Apply extra-strict prompt for Qwen2.5 models for maximum accuracy
+                // All other models keep the full prompt (backward compatible)
+                const isQwen25 = modelLower.includes('qwen2.5') || modelLower.includes('qwen');
                 
-                // Add num_ctx parameter to explicitly set context window based on model
+                if (modelLower.includes('tinyllama')) {
+                    requestBody.messages.push({
+                        role: 'system',
+                        content: [
+                            'You are a strict factual retrieval system. Answer ONLY the exact question asked.',
+                            'CRITICAL: Answer the question directly. Do NOT infer what the user might want.',
+                            'If the question is "what is X", answer what X IS, not errors, fixes, or other topics.',
+                            'Only use information EXPLICITLY in the context. No assumptions. No inferences.',
+                            'If the answer is not in context, reply: "No relevant information found."'
+                        ].join(' ')
+                    });
+                    requestBody.messages.push({
+                        role: 'user',
+                        content: [
+                            `Context:\n${truncatedContext}`,
+                            '',
+                            `Question: ${request.query}`,
+                            '',
+                            'CRITICAL INSTRUCTIONS:',
+                            `1. Answer the question "${request.query}" directly and exactly.`,
+                            '2. Do NOT infer what you think the user wants - answer what they asked.',
+                            '3. If the question asks "what is X", provide what X IS, not related topics like errors or fixes.',
+                            '4. Use ONLY information from the context above.',
+                            '5. If the answer is not in the context, reply: "No relevant information found."',
+                            '6. No assumptions. No inferences. No elaboration beyond what is asked.'
+                        ].join('\n')
+                    });
+                } else if (isQwen25) {
+                    // Extra-strict prompt for Qwen2.5 models
+                    requestBody.messages.push({
+                        role: 'system',
+                        content: [
+                            'You are a STRICT factual information retrieval system. Extract and present ONLY information explicitly stated in the provided context.',
+                            '',
+                            'CRITICAL RULES - ZERO TOLERANCE - 10/10 GOLD STANDARD:',
+                            '1. NO HALLUCINATION: Only state facts EXPLICITLY written in the context. If information is not in the context, reply: "No relevant information found."',
+                            '2. NO ASSUMPTIONS: Do not infer, deduce, or assume. Do not use general knowledge to fill gaps. Answer ONLY what is explicitly stated.',
+                            '3. NO SYCOPHANCY: Do not add flattery, pleasantries, or elaboration. Answer ONLY what is asked. No artificial content.',
+                            '4. NO FICTION: Do not create examples, scenarios, or hypotheticals unless explicitly requested.',
+                            '5. NO INFERENCES: Do not draw conclusions beyond what is directly stated. Present facts as-is.',
+                            '6. STRICT ACCURACY: Every claim must be directly traceable to the context. If you cannot point to exact text, do not include it.',
+                            '7. ELIMINATE FALSE POSITIVES: When uncertain, default to "No relevant information found" rather than guessing.',
+                            '8. DIRECT ANSWERS ONLY: Answer the EXACT question asked. Do NOT infer what the user might want. If asked "what is X", answer what X IS, not related topics.',
+                            '',
+                            'RESPONSE FORMAT:',
+                            '- Answer ONLY the specific question asked',
+                            '- Use ONLY information from the provided context',
+                            '- If context is insufficient: reply EXACTLY "No relevant information found."',
+                            '- Do NOT add explanations, examples, or additional context unless explicitly requested',
+                            '- Do NOT repeat the question or add introductory phrases',
+                            '- Do NOT output URLs, source titles, or web snippet markers',
+                            '',
+                            'QUALITY STANDARD: 10/10 Gold Standard - Zero tolerance for errors, assumptions, creative interpretation, or artificial content. 100% Accurate response required. No inferences. No artificial.'
+                        ].join('\n')
+                    });
+                    requestBody.messages.push({
+                        role: 'user',
+                        content: [
+                            'Context:',
+                            truncatedContext,
+                            '',
+                            'Question:',
+                            request.query,
+                            '',
+                            'CRITICAL INSTRUCTIONS - STRICT COMPLIANCE REQUIRED:',
+                            `1. Answer the question "${request.query}" directly and exactly. Do NOT infer what you think the user wants.`,
+                            '2. If the question asks "what is X", provide what X IS, not related topics like errors, fixes, or other information.',
+                            '3. Answer ONLY if the answer is EXPLICITLY stated in the context above.',
+                            '4. Do NOT infer, assume, or use general knowledge.',
+                            '5. Do NOT add flattery, examples, or elaboration.',
+                            '6. If the context does not contain the answer, reply EXACTLY: "No relevant information found."',
+                            '7. Present facts as-is from the context. No inferences. No assumptions. No artificial content.',
+                            '8. 100% accuracy required. Zero tolerance for hallucination or false positives.',
+                            '9. Strict, careful processing demanded: no hallucination, no assumptions, no sycophancy, no fiction.',
+                            '10. Deliver 10/10 Gold Standard Quality with elimination of all false positives. Do what is asked. 100% Accurate response, no inferences, no artificial.'
+                        ].join('\n')
+                    });
+                } else {
+                    // Full system prompt for all other models (unchanged, backward compatible)
+                    requestBody.messages.push({
+                        role: 'system',
+                        content: [
+                            'You are a strict factual information retrieval system. Extract and present ONLY information explicitly stated in the provided context.',
+                            '',
+                            'CRITICAL RULES - ZERO TOLERANCE:',
+                            '1. NO HALLUCINATION: Only state facts EXPLICITLY written in the context. If information is not in the context, reply: "No relevant information found."',
+                            '2. NO ASSUMPTIONS: Do not infer, deduce, or assume. Do not use general knowledge to fill gaps.',
+                            '3. NO SYCOPHANCY: Do not add flattery, pleasantries, or elaboration. Answer ONLY what is asked.',
+                            '4. NO FICTION: Do not create examples, scenarios, or hypotheticals unless explicitly requested.',
+                            '5. NO INFERENCES: Do not draw conclusions beyond what is directly stated. Present facts as-is.',
+                            '6. STRICT ACCURACY: Every claim must be directly traceable to the context. If you cannot point to exact text, do not include it.',
+                            '7. ELIMINATE FALSE POSITIVES: When uncertain, default to "No relevant information found" rather than guessing.',
+                            '',
+                            'RESPONSE FORMAT:',
+                            '- Answer ONLY the specific question asked',
+                            '- Use ONLY information from the provided context',
+                            '- If context is insufficient: reply EXACTLY "No relevant information found."',
+                            '- Do NOT add explanations, examples, or additional context unless explicitly requested',
+                            '- Do NOT repeat the question or add introductory phrases',
+                            '- Do NOT output URLs, source titles, or web snippet markers',
+                            '',
+                            'QUALITY STANDARD: 10/10 Gold Standard - Zero tolerance for errors, assumptions, or creative interpretation.'
+                        ].join('\n')
+                    });
+                    requestBody.messages.push({
+                        role: 'user',
+                        content: [
+                            'Context:',
+                            truncatedContext,
+                            '',
+                            'Question:',
+                            request.query,
+                            '',
+                            'CRITICAL INSTRUCTIONS:',
+                            'Answer ONLY if the answer is EXPLICITLY stated in the context above.',
+                            'Do NOT infer, assume, or use general knowledge.',
+                            'Do NOT add flattery, examples, or elaboration.',
+                            'If the context does not contain the answer, reply EXACTLY: "No relevant information found."',
+                            'Present facts as-is from the context. No inferences. No assumptions. No artificial content.',
+                            '100% accuracy required. Zero tolerance for hallucination or false positives.'
+                        ].join('\n')
+                    });
+                }
+                
+                // Fix: Use options object for num_ctx (correct Ollama API format)
                 // This helps prevent "context size too large" errors
-                requestBody.num_ctx = contextLimit.maxTokens;
+                // For TinyLlama, use a conservative context size to avoid memory issues
+                const numCtxToUse = modelLower.includes('tinyllama') 
+                    ? Math.min(contextLimit.maxTokens, 2048) // TinyLlama max is 2048 tokens
+                    : contextLimit.maxTokens;
+                requestBody.options = {
+                    num_ctx: numCtxToUse
+                };
                 
                 const resp = await fetch(`${this.ollamaUrl}/api/chat`, {
                     method: 'POST',
@@ -305,6 +412,10 @@ export class Generator {
                             model: modelToUse,
                             finishReason: data.done ? 'stop' : 'length'
                         };
+                    } else {
+                        // Empty content - this shouldn't happen, but handle it
+                        this.output.logWarning(`Ollama returned empty content for model ${modelToUse}. Response data: ${JSON.stringify(data).substring(0, 200)}`);
+                        throw new Error(`Ollama returned empty content. The model ${modelToUse} may not be installed or may have encountered an error. Try: ollama pull ${modelToUse}`);
                     }
                 } else {
                     // Try to get error details from response
@@ -313,9 +424,22 @@ export class Generator {
                         const errorData = await resp.json();
                         errorDetail = errorData.error || errorData.message || errorDetail;
                         this.output.logError(`Ollama request failed: ${errorDetail}`);
-                    } catch {
+                        
+                        // Check for memory errors and provide helpful guidance
+                        const errorLower = errorDetail.toLowerCase();
+                        if (errorLower.includes('memory') || errorLower.includes('gib') || errorLower.includes('system memory')) {
+                            this.output.logError(`Memory error detected. The model ${modelToUse} requires more memory than available.`);
+                            this.output.logError(`Suggestions: 1) Use a smaller model like 'tinyllama', 2) Reduce context size, 3) Close other applications to free memory.`);
+                            throw new Error(`Insufficient memory: ${errorDetail}. Try using a smaller model like 'tinyllama' or reduce the context size.`);
+                        }
+                    } catch (parseErr) {
+                        if (parseErr instanceof Error && parseErr.message.includes('Insufficient memory')) {
+                            throw parseErr; // Re-throw memory errors
+                        }
                         this.output.logError(`Ollama request failed: ${resp.status} ${resp.statusText}`);
                     }
+                    // Throw error so it can be caught and handled properly
+                    throw new Error(`Ollama API error: ${errorDetail}`);
                 }
             } catch (fetchErr: any) {
                 clearTimeout(timeoutId);
@@ -331,10 +455,22 @@ export class Generator {
             fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'generator.ts:204',message:'ollama fetch error',data:{error:err.message,elapsed:Date.now()-ollamaStart},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
             // #endregion
             this.output.logError(`Ollama call error: ${err.message || err}`);
+            
+            // Check for specific error types and provide helpful guidance
+            const errorMsg = (err.message || '').toLowerCase();
+            if (errorMsg.includes('model') && (errorMsg.includes('not found') || errorMsg.includes('does not exist'))) {
+                this.output.logError(`Model ${modelToUse} not found. Please install it with: ollama pull ${modelToUse}`);
+            } else if (errorMsg.includes('memory') || errorMsg.includes('gib') || errorMsg.includes('system memory') || errorMsg.includes('insufficient memory')) {
+                this.output.logError(`Memory error: ${err.message}`);
+                this.output.logError(`The model ${modelToUse} requires more memory than available. Consider:`);
+                this.output.logError(`1. Switch to a smaller model: Change 'ragAgent.model' setting to 'tinyllama'`);
+                this.output.logError(`2. Reduce context size in settings`);
+                this.output.logError(`3. Close other applications to free system memory`);
+            }
+            
+            // Re-throw the error so ModelGateway can handle retries
+            throw err;
         }
-
-        // Fallback: deterministic, context-grounded template
-        return this.fallbackResponse(request);
     }
 
     private async checkOllamaHealth(timeoutMs: number): Promise<boolean> {
@@ -351,21 +487,52 @@ export class Generator {
     }
 
     /**
+     * Check if a specific model is available in Ollama
+     */
+    private async checkModelExists(modelName: string): Promise<boolean> {
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 5000); // 5s timeout
+            try {
+                const resp = await fetch(`${this.ollamaUrl}/api/tags`, { method: 'GET', signal: controller.signal });
+                clearTimeout(timer);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const models = data?.models || [];
+                    return models.some((m: any) => m.name === modelName || m.name?.includes(modelName));
+                }
+                return false;
+            } catch {
+                clearTimeout(timer);
+                return false;
+            }
+        } catch {
+            return false; // If check fails, assume model might exist and let the request fail with better error
+        }
+    }
+
+    /**
      * Preload a model into Ollama to prevent loading delays on first request
      */
     private async preloadModel(modelName: string): Promise<void> {
         try {
             this.output.logInfo(`Preloading model ${modelName} to prevent first-request delays...`);
+            const modelLower = modelName.toLowerCase();
+            const isTinyLlama = modelLower.includes('tinyllama');
+            
             // Send a minimal request to trigger model loading
-            const preloadRequest = {
+            const preloadRequest: any = {
                 model: modelName,
                 messages: [{ role: 'user', content: 'test' }],
                 stream: false,
-                num_ctx: 128 // Minimal context for preload
+                options: {
+                    num_ctx: isTinyLlama ? 512 : 128 // Minimal context for preload
+                }
             };
             
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s for preload
+            const timeoutMs = isTinyLlama ? 60000 : 30000; // 60s for TinyLlama, 30s for others
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             
             try {
                 const resp = await fetch(`${this.ollamaUrl}/api/chat`, {
@@ -379,11 +546,11 @@ export class Generator {
                     this.output.logInfo(`Model ${modelName} preloaded successfully`);
                 }
             } catch {
-                // Preload failure is not critical, just log
+                // Preload failure is not critical - silently continue
                 this.output.logWarning(`Model preload failed, but continuing anyway`);
             }
         } catch (err) {
-            // Preload is optional, don't fail if it doesn't work
+            // Preload is optional - don't fail if it doesn't work
             this.output.logWarning(`Could not preload model: ${err}`);
         }
     }

@@ -103,7 +103,10 @@ export class ModelGateway {
                             modelLower.includes('qwen2.5') || 
                             modelLower.includes('deepseek') ||
                             modelLower.includes('llama3');
-        const effectiveTimeout = isLargeModel ? Math.max(this.timeout, 180000) : this.timeout; // At least 180s (3 min) for large models
+        const isTinyLlama = modelLower.includes('tinyllama');
+        // Preserve existing logic, add TinyLlama handling
+        const effectiveTimeout = isLargeModel ? Math.max(this.timeout, 180000) : 
+                                 (isTinyLlama ? 90000 : this.timeout); // 90s for TinyLlama, 180s for large, preserve default for others
         
         this.output.logInfo(`Routing to model: ${route.model}${isRcaQuery ? ' (RCA mode)' : ''} [timeout: ${effectiveTimeout}ms]`);
 

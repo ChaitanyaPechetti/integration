@@ -5,6 +5,7 @@
     let chatHistory = [];
     let lastLintUpdate = {}; // Track last lint update per file to prevent duplicates
     let thinkingIndicator = null;
+    let isProcessing = false; // Track if RAG agent is processing
     let cacheStats = {
         size: 0,
         maxSize: 500,
@@ -59,9 +60,31 @@
 
         // Clear chat
         clearChatBtn.addEventListener('click', () => {
+            // Only allow clearing after response is complete
+            if (isProcessing) {
+                alert('Please wait for the response to complete before clearing chat.');
+                return;
+            }
+            
             if (confirm('Are you sure you want to clear the chat?')) {
+                // Remove thinking indicator if visible
+                removeThinkingIndicator();
+                
+                // Clear chat history (this clears both query and response)
                 chatHistory = [];
+                
+                // Reset input and button states
+                queryInput.disabled = false;
+                queryInput.value = '';  // Clear query input
+                submitBtn.disabled = false;
+                submitBtn.style.display = 'flex';
+                stopBtn.style.display = 'none';
+                stopBtn.disabled = true;
+                
+                // Render empty chat state
                 renderChat();
+                
+                // Notify backend to clear chat history
                 vscode.postMessage({ type: 'clearChat' });
             }
         });
@@ -156,6 +179,10 @@
             alert('Query exceeds maximum length of 500 characters');
             return;
         }
+
+        // Set processing state
+        isProcessing = true;
+        clearChatBtn.disabled = true;  // Disable clear button during processing
 
         // Add user message to chat
         addMessage('user', query);
@@ -428,6 +455,9 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
+                // Response complete - enable clear chat button
+                isProcessing = false;
+                clearChatBtn.disabled = false;
                 break;
 
             case 'error':
@@ -437,6 +467,9 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
+                // Response complete (error) - enable clear chat button
+                isProcessing = false;
+                clearChatBtn.disabled = false;
                 break;
 
             case 'stopped':
@@ -446,6 +479,9 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
+                // Response complete (stopped) - enable clear chat button
+                isProcessing = false;
+                clearChatBtn.disabled = false;
                 break;
 
             case 'cacheStatsUpdate':
@@ -499,6 +535,11 @@
                     }
                 };
                 updateCacheStats();
+                break;
+
+            case 'chatCleared':
+                // Backend confirmed chat is cleared - frontend already cleared UI
+                // This ensures synchronization between frontend and backend
                 break;
 
             case 'emailStatus':

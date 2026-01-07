@@ -68,12 +68,13 @@
         },
         "ragAgent.model": {
           "type": "string",
-          "default": "phi3:mini-128k",
+          "default": "qwen2.5:3b",
           "enum": [
             "tinyllama",
             "phi3:mini-128k",
             "phi-2",
             "llama3",
+            "qwen2.5:3b",
             "qwen2.5-coder",
             "qwen2.5-coder:3b",
             "deepseek-r1:7b",
@@ -81,7 +82,7 @@
             "mistral",
             "codellama"
           ],
-          "description": "Ollama model to use for generation (phi3:mini-128k recommended for larger contexts)",
+          "description": "Ollama model to use for generation (qwen2.5:3b recommended for accuracy and speed)",
           "scope": "application"
         },
         "ragAgent.googleApiKey": {
@@ -118,6 +119,15 @@
           "type": "number",
           "default": 5,
           "description": "Number of documents to retrieve",
+          "scope": "application"
+        },
+        "ragAgent.knowledgeSources": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Paths to knowledge files or directories (JSON format) to load into RAG agent. Format: Array of { id, content, metadata, timestamp? } objects.",
           "scope": "application"
         },
         "ragAgent.similarityThreshold": {

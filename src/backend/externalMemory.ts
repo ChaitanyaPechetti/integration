@@ -33,7 +33,7 @@ export class ExternalMemory {
      */
     async seedLanguageDocs(): Promise<void> {
         // If already seeded, skip
-        if (this.documents.size > 0) return;
+        if (this.documents.has('lang-docs-seeded')) return;
 
         const now = Date.now();
         const docs: DocumentRecord[] = [
@@ -287,6 +287,258 @@ export class ExternalMemory {
         ];
 
         docs.forEach(doc => this.documents.set(doc.id, doc));
+        
+        // Mark language docs as seeded
+        this.documents.set('lang-docs-seeded', {
+            id: 'lang-docs-seeded',
+            content: 'Language docs seeded',
+            metadata: { title: 'Language Docs Seeded', tags: ['system'] },
+            timestamp: now
+        });
+    }
+
+    /**
+     * Seed comprehensive knowledge base covering multiple domains.
+     * This expands retrieval knowledge without altering any UI/functional flows.
+     * Maintains strict accuracy: factual, traceable information only.
+     */
+    async seedComprehensiveKnowledge(): Promise<void> {
+        // If already seeded, skip
+        if (this.documents.has('comprehensive-knowledge-seeded')) return;
+
+        const now = Date.now();
+        const comprehensiveDocs: DocumentRecord[] = [
+            // TECHNOLOGY DEFINITIONS
+            {
+                id: 'tech-python-definition',
+                content: [
+                    'Python is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991.',
+                    'Python emphasizes code readability with its notable use of significant whitespace.',
+                    'Python supports multiple programming paradigms including procedural, object-oriented, and functional programming.',
+                    'Python is dynamically typed and garbage-collected.',
+                    'Python is widely used for web development, data science, artificial intelligence, automation, and scientific computing.',
+                    'Key features: simple syntax, extensive standard library, large ecosystem of third-party packages via pip.',
+                    'Python versions: Python 2 (discontinued) and Python 3 (current).'
+                ].join('\n'),
+                metadata: { title: 'Python Definition', tags: ['python', 'programming', 'language', 'definition'] },
+                timestamp: now
+            },
+            {
+                id: 'tech-javascript-definition',
+                content: [
+                    'JavaScript is a high-level, interpreted programming language that conforms to the ECMAScript specification.',
+                    'JavaScript was created by Brendan Eich in 1995 and is one of the core technologies of the World Wide Web.',
+                    'JavaScript enables interactive web pages and is an essential part of web applications.',
+                    'JavaScript is primarily used for client-side scripting, but with Node.js it can be used for server-side development.',
+                    'Key features: dynamic typing, prototype-based object-orientation, first-class functions, event-driven programming.',
+                    'JavaScript is not related to Java despite the similar name.'
+                ].join('\n'),
+                metadata: { title: 'JavaScript Definition', tags: ['javascript', 'programming', 'language', 'definition'] },
+                timestamp: now
+            },
+            {
+                id: 'tech-java-definition',
+                content: [
+                    'Java is a high-level, class-based, object-oriented programming language developed by Sun Microsystems (now Oracle) and first released in 1995.',
+                    'Java is designed to have as few implementation dependencies as possible (write once, run anywhere).',
+                    'Java applications are typically compiled to bytecode that can run on any Java Virtual Machine (JVM).',
+                    'Java is widely used for enterprise applications, Android development, web applications, and large-scale systems.',
+                    'Key features: platform independence, automatic memory management, strong type system, extensive standard library.'
+                ].join('\n'),
+                metadata: { title: 'Java Definition', tags: ['java', 'programming', 'language', 'definition'] },
+                timestamp: now
+            },
+            
+            // FRAMEWORKS & LIBRARIES
+            {
+                id: 'framework-react',
+                content: [
+                    'React is a JavaScript library for building user interfaces, developed by Facebook (Meta) and released in 2013.',
+                    'React uses a component-based architecture and a virtual DOM for efficient rendering.',
+                    'React allows developers to build reusable UI components and manage application state.',
+                    'Key features: JSX syntax, component lifecycle, hooks (useState, useEffect), unidirectional data flow.',
+                    'React is commonly used with tools like Redux for state management and React Router for navigation.'
+                ].join('\n'),
+                metadata: { title: 'React Framework', tags: ['react', 'framework', 'javascript', 'frontend'] },
+                timestamp: now
+            },
+            {
+                id: 'framework-nodejs',
+                content: [
+                    'Node.js is a JavaScript runtime built on Chrome\'s V8 JavaScript engine, released in 2009.',
+                    'Node.js allows JavaScript to run on the server-side, enabling full-stack JavaScript development.',
+                    'Node.js uses an event-driven, non-blocking I/O model for efficient handling of concurrent operations.',
+                    'Node.js includes npm (Node Package Manager) for managing dependencies and packages.',
+                    'Common use cases: web servers, APIs, real-time applications, microservices, command-line tools.'
+                ].join('\n'),
+                metadata: { title: 'Node.js Runtime', tags: ['nodejs', 'javascript', 'runtime', 'backend'] },
+                timestamp: now
+            },
+            
+            // CONCEPTS & ARCHITECTURE
+            {
+                id: 'concept-api',
+                content: [
+                    'API (Application Programming Interface) is a set of protocols, routines, and tools for building software applications.',
+                    'APIs define how different software components should interact with each other.',
+                    'REST API: Representational State Transfer, uses HTTP methods (GET, POST, PUT, DELETE) for operations.',
+                    'GraphQL API: Query language for APIs that allows clients to request exactly the data they need.',
+                    'API endpoints are URLs where API services can be accessed.',
+                    'Common API formats: JSON (most common), XML, GraphQL.'
+                ].join('\n'),
+                metadata: { title: 'API Concepts', tags: ['api', 'concept', 'web', 'architecture'] },
+                timestamp: now
+            },
+            {
+                id: 'concept-database',
+                content: [
+                    'Database is an organized collection of data stored and accessed electronically.',
+                    'Relational databases (SQL): Store data in tables with relationships (MySQL, PostgreSQL, SQLite).',
+                    'NoSQL databases: Non-relational databases (MongoDB, Redis, Cassandra).',
+                    'Database operations: CRUD (Create, Read, Update, Delete).',
+                    'ACID properties: Atomicity, Consistency, Isolation, Durability (for transaction reliability).',
+                    'Indexing improves query performance by creating data structures for faster lookups.'
+                ].join('\n'),
+                metadata: { title: 'Database Concepts', tags: ['database', 'concept', 'data', 'storage'] },
+                timestamp: now
+            },
+            
+            // TOOLS & DEVOPS
+            {
+                id: 'tool-git',
+                content: [
+                    'Git is a distributed version control system created by Linus Torvalds in 2005.',
+                    'Git tracks changes in source code during software development.',
+                    'Key Git commands: clone, add, commit, push, pull, branch, merge, checkout.',
+                    'GitHub, GitLab, and Bitbucket are popular Git hosting services.',
+                    'Git workflow: working directory → staging area → local repository → remote repository.',
+                    'Branching allows parallel development without affecting the main codebase.'
+                ].join('\n'),
+                metadata: { title: 'Git Version Control', tags: ['git', 'tool', 'version-control', 'devops'] },
+                timestamp: now
+            },
+            {
+                id: 'tool-docker',
+                content: [
+                    'Docker is a platform for developing, shipping, and running applications using containerization.',
+                    'Containers package applications with their dependencies, ensuring consistency across environments.',
+                    'Docker images are read-only templates used to create containers.',
+                    'Dockerfile defines how to build a Docker image.',
+                    'Key benefits: isolation, portability, scalability, consistency.',
+                    'Docker Compose allows defining and running multi-container Docker applications.'
+                ].join('\n'),
+                metadata: { title: 'Docker Containerization', tags: ['docker', 'tool', 'container', 'devops'] },
+                timestamp: now
+            },
+            
+            // GENERAL KNOWLEDGE - SCIENCE
+            {
+                id: 'science-computer',
+                content: [
+                    'Computer is an electronic device that processes data using instructions stored in its memory.',
+                    'Computers consist of hardware (physical components) and software (programs and data).',
+                    'Key components: CPU (Central Processing Unit), RAM (Random Access Memory), storage, motherboard.',
+                    'Operating systems (OS) manage hardware resources and provide services for applications.',
+                    'Common operating systems: Windows, macOS, Linux, Unix.'
+                ].join('\n'),
+                metadata: { title: 'Computer Science Basics', tags: ['computer', 'science', 'hardware', 'software'] },
+                timestamp: now
+            },
+            
+            // PROGRAMMING CONCEPTS
+            {
+                id: 'concept-oop',
+                content: [
+                    'Object-Oriented Programming (OOP) is a programming paradigm based on objects and classes.',
+                    'Key OOP principles: Encapsulation, Inheritance, Polymorphism, Abstraction.',
+                    'Class is a blueprint for creating objects.',
+                    'Object is an instance of a class.',
+                    'Encapsulation: Bundling data and methods that operate on that data.',
+                    'Inheritance: Mechanism where a class inherits properties and methods from another class.',
+                    'Polymorphism: Ability of objects to take multiple forms or respond differently to the same method call.'
+                ].join('\n'),
+                metadata: { title: 'Object-Oriented Programming', tags: ['oop', 'programming', 'concept', 'paradigm'] },
+                timestamp: now
+            },
+            {
+                id: 'concept-algorithm',
+                content: [
+                    'Algorithm is a step-by-step procedure for solving a problem or completing a task.',
+                    'Algorithms are fundamental to computer science and programming.',
+                    'Algorithm complexity: Time complexity (how long it takes) and Space complexity (how much memory it uses).',
+                    'Common algorithm types: sorting, searching, graph traversal, dynamic programming.',
+                    'Big O notation describes the worst-case time complexity of an algorithm.',
+                    'Examples: Binary search (O(log n)), Bubble sort (O(n²)), Quick sort (average O(n log n)).'
+                ].join('\n'),
+                metadata: { title: 'Algorithms', tags: ['algorithm', 'programming', 'concept', 'computer-science'] },
+                timestamp: now
+            }
+        ];
+
+        comprehensiveDocs.forEach(doc => this.documents.set(doc.id, doc));
+        
+        // Mark comprehensive knowledge as seeded
+        this.documents.set('comprehensive-knowledge-seeded', {
+            id: 'comprehensive-knowledge-seeded',
+            content: 'Comprehensive knowledge seeded',
+            metadata: { title: 'Comprehensive Knowledge Seeded', tags: ['system'] },
+            timestamp: now
+        });
+    }
+
+    /**
+     * Load knowledge from a JSON file or directory of knowledge files.
+     * Format: Array of { id, content, metadata, timestamp? } objects.
+     * This allows users to add custom knowledge without changing code.
+     */
+    async loadKnowledgeFromFile(filePath: string): Promise<number> {
+        const fs = require('fs').promises;
+        const path = require('path');
+        
+        try {
+            const stats = await fs.stat(filePath);
+            let loaded = 0;
+            
+            if (stats.isDirectory()) {
+                // Load all JSON files from directory
+                const files = await fs.readdir(filePath);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        const filePathFull = path.join(filePath, file);
+                        const content = await fs.readFile(filePathFull, 'utf-8');
+                        const docs = JSON.parse(content);
+                        const docsArray = Array.isArray(docs) ? docs : [docs];
+                        for (const doc of docsArray) {
+                            await this.storeDocument({
+                                id: doc.id || `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                                content: doc.content,
+                                metadata: doc.metadata || {},
+                                timestamp: doc.timestamp || Date.now()
+                            });
+                            loaded++;
+                        }
+                    }
+                }
+            } else {
+                // Load single file
+                const content = await fs.readFile(filePath, 'utf-8');
+                const docs = JSON.parse(content);
+                const docsArray = Array.isArray(docs) ? docs : [docs];
+                for (const doc of docsArray) {
+                    await this.storeDocument({
+                        id: doc.id || `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        content: doc.content,
+                        metadata: doc.metadata || {},
+                        timestamp: doc.timestamp || Date.now()
+                    });
+                    loaded++;
+                }
+            }
+            
+            return loaded;
+        } catch (error: any) {
+            throw new Error(`Failed to load knowledge from file: ${error.message}`);
+        }
     }
 
     async getDocuments(_query: string, topK: number): Promise<DocumentRecord[]> {

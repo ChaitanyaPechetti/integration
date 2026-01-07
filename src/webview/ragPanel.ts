@@ -384,6 +384,34 @@ export class RAGPanel {
         return firstSentence || title;
     }
 
+    /**
+     * Load knowledge from configured file sources.
+     * This allows users to add custom knowledge via configuration without changing code.
+     */
+    private async loadKnowledgeFromSources(): Promise<void> {
+        try {
+            const config = vscode.workspace.getConfiguration('ragAgent');
+            const knowledgeSources = config.get<string[]>('knowledgeSources', []);
+            
+            if (knowledgeSources.length === 0) {
+                return; // No knowledge sources configured
+            }
+
+            this.outputChannel.logInfo(`[KNOWLEDGE] Loading knowledge from ${knowledgeSources.length} source(s)`);
+            
+            for (const source of knowledgeSources) {
+                try {
+                    const loaded = await this.externalMemory.loadKnowledgeFromFile(source);
+                    this.outputChannel.logInfo(`[KNOWLEDGE] Loaded ${loaded} document(s) from: ${source}`);
+                } catch (error: any) {
+                    this.outputChannel.logWarning(`[KNOWLEDGE] Failed to load from ${source}: ${error.message}`);
+                    // Continue loading other sources even if one fails
+                }
+            }
+        } catch (error: any) {
+            this.outputChannel.logError(`[KNOWLEDGE] Error loading knowledge sources: ${error.message}`);
+        }
+    }
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -401,6 +429,10 @@ export class RAGPanel {
         this.externalMemory = new ExternalMemory();
         // Seed built-in language reference docs to broaden programming knowledge without changing UI flows
         void this.externalMemory.seedLanguageDocs();
+        // Seed comprehensive knowledge base covering multiple domains
+        void this.externalMemory.seedComprehensiveKnowledge();
+        // Load knowledge from configured file sources
+        void this.loadKnowledgeFromSources();
         this.retriever = new Retriever(this.externalMemory, this.cacheManager, this.outputChannel);
         this.webSearch = new WebSearch(this.cacheManager, this.outputChannel);
         this.contextBuilder = new ContextBuilder();
@@ -446,7 +478,11 @@ export class RAGPanel {
                         await this.handleStop();
                         break;
                     case 'clearChat':
-                        this.outputChannel.logInfo('Chat cleared');
+                        // Clear chat history from backend storage
+                        await this.externalMemory.clearChatHistory();
+                        this.outputChannel.logInfo('Chat history cleared from backend');
+                        // Send confirmation to webview (optional - frontend already cleared UI)
+                        this.sendMessage({ type: 'chatCleared' });
                         break;
                     case 'refreshCacheStats':
                         this.sendCacheStats();
@@ -1337,6 +1373,12 @@ export class RAGPanel {
             const contextTraceId = this.observability.startTrace('context_construction');
             const chatHistory = await this.externalMemory.getChatHistory(10);
             const context = this.contextBuilder.buildContext(sanitized, internalDocs, webDocs, chatHistory);
+            
+            // Validate context quality for accuracy monitoring
+            if (!this.contextBuilder.validateContextQuality(context, sanitized)) {
+                this.outputChannel.logWarning('[ACCURACY] Context quality validation failed - low relevance detected. Proceeding with available context.');
+            }
+            
             this.observability.endTrace(contextTraceId, 'success');
 
             // Model gateway
