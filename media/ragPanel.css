@@ -700,3 +700,30 @@ body.light .btn-stop:hover:not(:disabled) {
     max-width: 75%;
 }
 
+.log-helper-section {
+    margin-top: 1em;
+    padding: 0.5em;
+    border: 1px solid var(--vscode-panel-border, #ccc);
+    border-radius: 6px;
+}
+
+.log-helper-section .section-title {
+    margin: 0 0 0.5em 0;
+}
+
+.log-helper-label {
+    margin-left: 0.5em;
+    color: var(--vscode-descriptionForeground, #666);
+}
+
+.log-helper-output {
+    white-space: pre-wrap;
+    font-size: 0.9em;
+    max-height: 200px;
+    overflow: auto;
+    margin-top: 0.5em;
+    padding: 0.5em;
+    background: var(--vscode-textCodeBlock-background, #f5f5f5);
+    border-radius: 4px;
+}
+

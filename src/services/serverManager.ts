@@ -186,6 +186,22 @@ export class ServerManager {
         const fastApiUrl = config.get<string>('zerouiEndpoint', 'http://localhost:8001');
         const healthUrl = `${fastApiUrl}/api/health`;
         
+        // Read Log Helper source path from VS Code setting
+        const logHelperSourcePath = config.get<string>('logHelperSourcePath', '');
+        let validatedLogHelperPath: string | undefined;
+        
+        if (logHelperSourcePath && logHelperSourcePath.trim()) {
+            const resolvedPath = path.resolve(logHelperSourcePath);
+            const analyzerPath = path.join(resolvedPath, 'analyzer.py');
+            if (fs.existsSync(analyzerPath)) {
+                validatedLogHelperPath = resolvedPath;
+                this.outputChannel.appendLine(`[Log Helper] Using configured source path: ${validatedLogHelperPath}`);
+            } else {
+                this.outputChannel.appendLine(`[Log Helper] Warning: Configured path not found: ${resolvedPath}`);
+                this.outputChannel.appendLine(`[Log Helper] Will use auto-detection or fallback`);
+            }
+        }
+        
         // Check if FastAPI is already running
         const isRunning = await this.checkServerHealth(healthUrl);
         if (isRunning) {
@@ -216,7 +232,7 @@ export class ServerManager {
                         const workspacePath = workspaceFolder.uri.fsPath;
                         const workspaceFastApiPath = path.join(workspacePath, 'fastapi_server.py');
                         if (fs.existsSync(workspaceFastApiPath)) {
-                            return await this.startFastAPIFromPath(workspaceFastApiPath, workspacePath, fastApiUrl, attempt === 1);
+                            return await this.startFastAPIFromPath(workspaceFastApiPath, workspacePath, fastApiUrl, validatedLogHelperPath, attempt === 1);
                         }
                     }
                     if (attempt === 1) {
@@ -226,7 +242,7 @@ export class ServerManager {
                     continue;
                 }
 
-                return await this.startFastAPIFromPath(fastApiScriptPath, extensionPath, fastApiUrl, attempt === 1);
+                return await this.startFastAPIFromPath(fastApiScriptPath, extensionPath, fastApiUrl, validatedLogHelperPath, attempt === 1);
             } catch (error: any) {
                 this.outputChannel.appendLine(`Error starting FastAPI (attempt ${attempt + 1}): ${error.message}`);
                 if (attempt === 1) {
@@ -242,7 +258,7 @@ export class ServerManager {
     /**
      * Start FastAPI from a specific path
      */
-    private static async startFastAPIFromPath(scriptPath: string, workingDir: string, fastApiUrl: string, isLastAttempt: boolean = false): Promise<boolean> {
+    private static async startFastAPIFromPath(scriptPath: string, workingDir: string, fastApiUrl: string, logHelperSourcePath?: string, isLastAttempt: boolean = false): Promise<boolean> {
         const healthUrl = `${fastApiUrl}/api/health`;
         
         try {
@@ -292,7 +308,10 @@ export class ServerManager {
                         env: {
                             ...process.env,
                             FASTAPI_PORT: port,
-                            OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+                            OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                            ...(logHelperSourcePath && logHelperSourcePath.trim() ? {
+                                LOG_HELPER_SOURCE_PATH: path.resolve(logHelperSourcePath)
+                            } : {})
                         }
                     }
                 );
@@ -309,7 +328,10 @@ export class ServerManager {
                         env: {
                             ...process.env,
                             FASTAPI_PORT: port,
-                            OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+                            OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                            ...(logHelperSourcePath && logHelperSourcePath.trim() ? {
+                                LOG_HELPER_SOURCE_PATH: path.resolve(logHelperSourcePath)
+                            } : {})
                         }
                     }
                 );

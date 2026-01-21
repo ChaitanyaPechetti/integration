@@ -9,3 +9,36 @@ vsc-extension-quickstart.md
 **/*.ts
 !out/**/*.js
 
+# Exclude large/unnecessary directories for packaging
+.specstory/**
+.cursor/**
+.venv/**
+coverage/**
+node_modules/**
+__pycache__/**
+*.pyc
+.pytest_cache/**
+.nyc_output/**
+
+# Exclude development files
+jest.config.js
+coverage-report.json
+coverage-analysis.json
+TEST_ANALYSIS_REPORT.md
+IMPROVEMENTS_SUMMARY.md
+RAG_Agent.md
+SETUP.md
+END_USER_TESTING_GUIDE.md
+INTEGRATION_PLAN.md
+INTEGRATION_IMPLEMENTATION.md
+INTEGRATION_COMPLETE.md
+IMPLEMENTATION_SUMMARY.md
+
+# Keep only essential files
+!package.json
+!README.md
+!fastapi_server.py
+!requirements.txt
+!out/**
+!media/**
+

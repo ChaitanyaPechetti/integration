@@ -10,8 +10,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:rag.openPanel",
-    "onStartupFinished"
+    "onCommand:rag.openPanel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -54,6 +53,26 @@
       {
         "command": "rag.openSettings",
         "title": "Open Settings",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.showErrorLog",
+        "title": "Show Error Log",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.clearErrorLog",
+        "title": "Clear Error Log",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.indexCodebase",
+        "title": "Index Entire Codebase",
+        "category": "RAG Agent"
+      },
+      {
+        "command": "rag.analyzeCodebaseComprehensive",
+        "title": "Comprehensive Codebase Analysis",
         "category": "RAG Agent"
       }
     ],
@@ -208,9 +227,106 @@
           "default": false,
           "description": "Automatically start FastAPI and Ollama servers on extension activation.",
           "scope": "application"
+        },
+        "ragAgent.emailRecipient": {
+          "type": "string",
+          "default": "jafarsadiqe.2001@gmail.com",
+          "description": "Email address to receive emails from RAG Agent",
+          "scope": "application"
+        },
+        "ragAgent.emailSmtpHost": {
+          "type": "string",
+          "default": "smtp.gmail.com",
+          "description": "SMTP server host (default: smtp.gmail.com for Gmail)",
+          "scope": "application"
+        },
+        "ragAgent.emailSmtpPort": {
+          "type": "number",
+          "default": 587,
+          "description": "SMTP server port (587 for TLS, 465 for SSL)",
+          "scope": "application"
+        },
+        "ragAgent.emailSmtpUser": {
+          "type": "string",
+          "default": "",
+          "description": "SMTP username (your Gmail address)",
+          "scope": "application"
+        },
+        "ragAgent.emailSmtpPassword": {
+          "type": "string",
+          "default": "",
+          "description": "SMTP password (Gmail App Password, not regular password)",
+          "scope": "application"
+        },
+        "ragAgent.emailFrom": {
+          "type": "string",
+          "default": "",
+          "description": "Email address to send from (usually same as SMTP user)",
+          "scope": "application"
+        },
+        "ragAgent.logHelperEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Log Helper (Pattern Agent from ai-log-helper-gui). Requires FastAPI with /api/log-helper routes.",
+          "scope": "application"
+        },
+        "ragAgent.logHelperUrl": {
+          "type": "string",
+          "default": "http://localhost:8001",
+          "description": "Base URL for Log Helper API (FastAPI server with /api/log-helper/*).",
+          "scope": "application"
+        },
+        "ragAgent.logHelperSourcePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to ai-log-helper-gui src folder (optional, auto-detected if empty). Example: C:/Users/user/Desktop/ai-log-helper-gui/src",
+          "scope": "application"
+        },
+        "ragAgent.codebaseAutoIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically index entire codebase for comprehensive querying",
+          "scope": "application"
+        },
+        "ragAgent.codebaseIndexMaxFiles": {
+          "type": "number",
+          "default": 1000,
+          "description": "Maximum number of files to index from codebase",
+          "scope": "application"
+        },
+        "ragAgent.codebaseIndexMaxSizeBytes": {
+          "type": "number",
+          "default": 2000000,
+          "description": "Maximum file size in bytes to index (2MB default)",
+          "scope": "application"
+        },
+        "ragAgent.codebaseIndexLanguages": {
+          "type": "array",
+          "default": ["typescript", "javascript", "python", "java", "go", "rust", "cpp", "c", "csharp"],
+          "items": {
+            "type": "string"
+          },
+          "description": "File extensions to index (without dot)",
+          "scope": "application"
+        },
+        "ragAgent.codebaseIndexDepth": {
+          "type": "string",
+          "enum": ["shallow", "medium", "deep"],
+          "default": "deep",
+          "description": "Indexing depth: shallow (files only), medium (files + functions), deep (files + functions + classes + interfaces + chunks)",
+          "scope": "application"
+        },
+        "ragAgent.codebaseGuaranteedInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always return codebase information (use fallbacks if needed)",
+          "scope": "application"
         }
       }
     }
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.12"
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -224,6 +340,7 @@
     "@types/jest": "^29.5.12",
     "@types/node": "^16.18.126",
     "@types/node-fetch": "^2.6.4",
+    "@types/nodemailer": "^7.0.4",
     "@types/vscode": "^1.74.0",
     "jest": "^29.7.0",
     "node-fetch": "^2.6.12",

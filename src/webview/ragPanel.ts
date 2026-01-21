@@ -10,8 +10,13 @@ import { InputGuardrail } from '../backend/guardrails/inputGuardrail';
 import { OutputGuardrail } from '../backend/guardrails/outputGuardrail';
 import { ModelGateway } from '../backend/modelGateway/modelGateway';
 import { WriteActionHandler } from '../backend/writeActions/writeActionHandler';
+import { LogHelperClient } from '../utils/logHelperClient';
 import { DocumentRecord } from '../backend/externalMemory';
 import { ErrorDetector } from '../backend/rca/errorDetector';
+import { ComprehensiveCodebaseIndexer, IndexingResult } from '../backend/codebase/comprehensiveIndexer';
+import { GuaranteedCodebaseRetriever } from '../backend/codebase/guaranteedRetriever';
+import { CodebaseQueryRouter, QueryAnalysis } from '../backend/codebase/codebaseQueryRouter';
+import { CodebaseAnalyzer, CodebaseAnalysis } from '../backend/codebase/codebaseAnalyzer';
 
 // RCA detection threshold to decide when to switch into RCA mode
 const RCA_CONFIDENCE_THRESHOLD = 0.4;
@@ -35,6 +40,11 @@ export class RAGPanel {
     private outputGuardrail: OutputGuardrail;
     private modelGateway: ModelGateway;
     private writeActions: WriteActionHandler;
+    private logHelperClient: LogHelperClient;
+    private comprehensiveIndexer: ComprehensiveCodebaseIndexer;
+    private codebaseAnalyzer: CodebaseAnalyzer;
+    private indexingStatus: 'idle' | 'indexing' | 'complete' | 'failed' = 'idle';
+    private codebaseIndexDebounceTimer: NodeJS.Timeout | undefined;
 
     // Remove model-echoed prompt/context artifacts from the final answer.
     public sanitizeModelResponse(text: string): string {
@@ -373,6 +383,23 @@ export class RAGPanel {
         return sections.join('\n');
     }
 
+    /** True if the message is only a greeting or small talk (e.g. hi, hello, thanks). */
+    private isGreeting(text: string): boolean {
+        const t = text.trim().toLowerCase().replace(/[!?.,;:\s]+$/g, '').trim();
+        if (!t) return false;
+        const greetings = new Set([
+            'hi', 'hello', 'hey', 'howdy', 'hiya', 'greetings', 'thanks', 'thank you', 'thx', 'ty',
+            'yo', 'sup', 'hi there', 'hello there', 'hey there',
+            'good morning', 'good afternoon', 'good evening',
+            'how are you', 'how are ya', "what's up", 'whats up', 'how do you do'
+        ]);
+        if (greetings.has(t)) return true;
+        if (/^thank\s+you$/i.test(t)) return true;
+        if (/^good\s+(morning|afternoon|evening)$/i.test(t)) return true;
+        if (/^(how\s+are\s+you|what'?s\s+up)$/i.test(t)) return true;
+        return false;
+    }
+
     // Pick a concise sentence from sources as a fallback
     private pickSourceSentence(sources: { title: string; link?: string }[]): string {
         if (!sources.length || !sources[0].title) return 'No relevant information found.';
@@ -440,9 +467,18 @@ export class RAGPanel {
         this.outputGuardrail = new OutputGuardrail(this.outputChannel);
         this.modelGateway = new ModelGateway(this.outputChannel);
         this.writeActions = new WriteActionHandler(this.outputChannel);
+        this.logHelperClient = new LogHelperClient(this.outputChannel);
+        this.comprehensiveIndexer = new ComprehensiveCodebaseIndexer(this.externalMemory, this.outputChannel);
+        this.codebaseAnalyzer = new CodebaseAnalyzer(this.outputChannel);
 
         // Set webview initial content
         this._update();
+
+        // Index codebase on panel creation (async, non-blocking)
+        void this.indexEntireCodebaseIfNeeded();
+
+        // Setup file watcher for incremental updates
+        this.setupCodebaseFileWatcher();
 
         // Listen for when the panel is disposed
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -512,6 +548,18 @@ export class RAGPanel {
                     case 'autoRcaRequest':
                         // Auto-trigger RCA for file-based errors
                         await this.handleAutoRca(message.errorMessage, message.file, message.issues);
+                        break;
+                    case 'logHelperSelectFiles':
+                        await this.handleLogHelperSelectFiles();
+                        break;
+                    case 'logHelperPatternAgent':
+                        await this.handleLogHelperPatternAgent(message.logFiles || []);
+                        break;
+                    case 'logHelperMmm':
+                        await this.handleLogHelperMmm(message.lastError || '', message.persona || 'developer');
+                        break;
+                    case 'logHelperUserActions':
+                        await this.handleLogHelperUserActions(message.logFiles || []);
                         break;
                 }
             },
@@ -714,6 +762,60 @@ export class RAGPanel {
                 timestamp: Date.now()
             });
         }
+    }
+
+    /**
+     * Collect all errors from the workspace diagnostics
+     */
+    private async collectWorkspaceErrors(): Promise<Array<{
+        file: string;
+        line: number;
+        character: number;
+        message: string;
+        severity: vscode.DiagnosticSeverity;
+    }>> {
+        const errors: Array<{
+            file: string;
+            line: number;
+            character: number;
+            message: string;
+            severity: vscode.DiagnosticSeverity;
+        }> = [];
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return errors;
+        }
+
+        // Get all diagnostics from VS Code
+        const allDiagnostics = vscode.languages.getDiagnostics();
+        
+        for (const [uri, diagnostics] of allDiagnostics) {
+            // Only include errors and warnings
+            const relevantDiags = diagnostics.filter(d => 
+                d.severity === vscode.DiagnosticSeverity.Error || 
+                d.severity === vscode.DiagnosticSeverity.Warning
+            );
+
+            for (const diag of relevantDiags) {
+                const workspaceFolder = workspaceFolders.find(folder => 
+                    uri.fsPath.startsWith(folder.uri.fsPath)
+                );
+                
+                if (workspaceFolder) {
+                    const relativePath = vscode.workspace.asRelativePath(uri);
+                    errors.push({
+                        file: relativePath,
+                        line: diag.range.start.line + 1, // Convert to 1-based
+                        character: diag.range.start.character + 1,
+                        message: diag.message,
+                        severity: diag.severity
+                    });
+                }
+            }
+        }
+
+        return errors;
     }
 
     /**
@@ -1162,6 +1264,34 @@ export class RAGPanel {
             const sanitized = this.inputGuardrail.sanitize(query);
             this.observability.endTrace(inputTraceId, 'success');
 
+            // NEW: Check if this is a codebase query
+            const queryRouter = new CodebaseQueryRouter();
+            const queryAnalysis = queryRouter.detectCodebaseQuery(sanitized);
+            
+            let codebaseDocs: DocumentRecord[] = [];
+            if (queryAnalysis.isCodebaseQuery && queryAnalysis.confidence > 0.5) {
+                this.outputChannel.logInfo(`[Codebase Query] Detected codebase query (confidence: ${queryAnalysis.confidence}, type: ${queryAnalysis.type})`);
+                
+                // Use guaranteed codebase retrieval
+                const guaranteedRetriever = new GuaranteedCodebaseRetriever(this.outputChannel);
+                const retrievalResult = await guaranteedRetriever.retrieveWithGuarantee(
+                    sanitized,
+                    topK,
+                    this.externalMemory
+                );
+                
+                // Ensure we have documents (guaranteed)
+                codebaseDocs = retrievalResult.documents;
+                
+                // Safety check (should never be empty due to guarantee)
+                if (codebaseDocs.length === 0) {
+                    const fallbackDoc = this.buildCodebaseFallbackDocument();
+                    codebaseDocs = [fallbackDoc];
+                }
+                
+                this.outputChannel.logInfo(`[Codebase Query] Retrieved ${codebaseDocs.length} codebase documents`);
+            }
+
             // Shortcut: if user asks to analyze the current codebase, run the on-demand scan
             const normalized = sanitized.trim().toLowerCase();
             if (normalized === 'analyze the current codebase' || normalized === 'analyze current codebase') {
@@ -1178,9 +1308,223 @@ export class RAGPanel {
                 return;
             }
 
+            // Greeting / small talk: return a short friendly reply without RAG (no change to RAG path)
+            if (this.isGreeting(sanitized)) {
+                const canned = "Hello! I'm your Inventory Assistant. I'm here to help with questions about inventory management and your knowledge base. What would you like to know?";
+                const elapsedMs = Date.now() - startTime;
+                const responseText = `${canned}\n\nTime taken: ${elapsedMs} ms`;
+                await this.externalMemory.storeChatMessage({ role: 'user', content: sanitized, timestamp: Date.now() });
+                await this.externalMemory.storeChatMessage({ role: 'assistant', content: canned, timestamp: Date.now() });
+                this.cacheManager.set(query, canned);
+                this.sendMessage({ type: 'response', response: responseText, cached: false, sources: [] });
+                this.observability.recordLatency('query_processing', elapsedMs);
+                this.observability.endTrace(traceId, 'success', { greeting: true });
+                this.sendCacheStats();
+                this.updateStatusBar('ready');
+                return;
+            }
+
             // Enhanced Root Cause Analysis detection and processing
             const errorDetector = new ErrorDetector();
             const errorDetection = errorDetector.detectError(sanitized);
+            
+            // Check if this is a query asking about errors in the repo
+            const errorQueryDetection = errorDetector.detectErrorQuery(sanitized);
+            
+            // If user is asking about errors in the repo, collect and analyze them
+            if (errorQueryDetection.detected && !errorDetection.detected) {
+                this.outputChannel.logInfo(`[RCA] Detected error query: collecting workspace errors`);
+                
+                // Collect all errors from workspace
+                const workspaceErrors = await this.collectWorkspaceErrors();
+                
+                if (workspaceErrors.length === 0) {
+                    // No errors found
+                    const noErrorsResponse = `✅ **No errors found in your codebase!**\n\nYour code appears to be error-free. If you're experiencing issues, try:\n- Running a build or test\n- Checking the Problems panel (Ctrl+Shift+M)\n- Asking about a specific error message`;
+                    this.sendMessage({
+                        type: 'response',
+                        response: noErrorsResponse,
+                        cached: false,
+                        sources: []
+                    });
+                    this.updateStatusBar('ready');
+                    this.observability.endTrace(traceId, 'success', { errorQuery: true, errorsFound: 0 });
+                    return;
+                }
+                
+                // Group errors by file
+                const errorsByFile = new Map<string, typeof workspaceErrors>();
+                for (const error of workspaceErrors) {
+                    if (!errorsByFile.has(error.file)) {
+                        errorsByFile.set(error.file, []);
+                    }
+                    errorsByFile.get(error.file)!.push(error);
+                }
+                
+                // Build comprehensive error summary
+                const totalErrors = workspaceErrors.filter(e => e.severity === vscode.DiagnosticSeverity.Error).length;
+                const totalWarnings = workspaceErrors.filter(e => e.severity === vscode.DiagnosticSeverity.Warning).length;
+                
+                // Create error summary message for RCA
+                const errorSummary = Array.from(errorsByFile.entries())
+                    .map(([file, fileErrors]) => {
+                        const fileErrorList = fileErrors
+                            .map(e => `  Line ${e.line}:${e.character} - ${e.message}`)
+                            .join('\n');
+                        return `${file}:\n${fileErrorList}`;
+                    })
+                    .join('\n\n');
+                
+                const errorMessageForRca = `Found ${totalErrors} error(s) and ${totalWarnings} warning(s) in ${errorsByFile.size} file(s):\n\n${errorSummary}`;
+                
+                // Use RCA path for error analysis
+                const rcaContextBuilder = new RcaContextBuilder();
+                const workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+                const rcaChatHistory = await this.externalMemory.getChatHistory(5);
+                
+                // Get web docs for error analysis
+                const rcaTopK = Math.max(10, vscode.workspace.getConfiguration('ragAgent').get<number>('topK', 5) * 2);
+
+                let webDocs: DocumentRecord[] = [];
+                if (this.webSearch.hasCredentials()) {
+                    webDocs = await this.webSearch.search(errorMessageForRca, rcaTopK, true);
+                } else {
+                    this.outputChannel.logWarning('[RCA] Web search credentials missing; proceeding with internal sources only.');
+                }
+                const internalDocs = await this.retriever.retrieveInternal(errorMessageForRca, rcaTopK);
+                
+                // Build RCA context
+                const rcaContext = await rcaContextBuilder.buildRcaContext(
+                    errorMessageForRca,
+                    webDocs,
+                    internalDocs,
+                    workspaceUri
+                );
+                
+                // Build RCA-specific prompt for codebase analysis
+                const rcaPrompt = [
+                    'You are an expert software engineer performing root cause analysis on a codebase.',
+                    'Analyze the errors found in the codebase and provide a comprehensive analysis.',
+                    '',
+                    'CRITICAL: Respond EXACTLY in this format:',
+                    '',
+                    'rootcause:',
+                    '[Provide the ACTUAL root causes for THIS codebase. Identify common patterns, systemic issues, and primary problems. Be technical and specific. Group related errors. 2-5 sentences.]',
+                    '',
+                    'solution:',
+                    '[Provide the ACTUAL solution steps to fix the errors in THIS codebase. Be specific and actionable. Number each step. Reference file names and line numbers. Group fixes by category if applicable.]',
+                    '',
+                    'IMPORTANT RULES:',
+                    '- Do NOT use placeholders like "e.g.," or "[example]"',
+                    '- Do NOT say "follow these steps" or "analyze the error"',
+                    '- Do NOT provide generic examples - give the ACTUAL analysis for THIS codebase',
+                    '- Reference the exact files and line numbers from the error list',
+                    '- Group related errors together',
+                    '- Be technical, specific, and actionable',
+                    '- Focus ONLY on the errors provided, nothing else'
+                ].join('\n');
+                
+                // Generate RCA response
+                const rcaGatewayTraceId = this.observability.startTrace('rca_model_gateway');
+                const rcaGatewayStart = Date.now();
+                const rcaResult = await this.modelGateway.process({
+                    context: rcaContext,
+                    query: rcaPrompt,
+                    chatHistory: rcaChatHistory.map(msg => ({ role: msg.role, content: msg.content }))
+                });
+                this.observability.recordLatency('rca_model_gateway', Date.now() - rcaGatewayStart);
+                this.observability.endTrace(rcaGatewayTraceId, 'success', { 
+                    errorQuery: true,
+                    errorsFound: workspaceErrors.length
+                });
+                
+                // Output guardrail for RCA response
+                const rcaOutputTraceId = this.observability.startTrace('rca_output_guardrail');
+                let rcaFinalResponse = rcaResult.response;
+                const rcaOutputCheck = this.outputGuardrail.validate(rcaResult.response);
+                if (!rcaOutputCheck.isValid) {
+                    if (rcaOutputCheck.needsRegeneration) {
+                        this.observability.recordGuardrailReject('output', 'RCA response unsafe - regenerating');
+                        const regenerateRequest = {
+                            context: rcaContext,
+                            query: `Please provide a safe, sanitized root cause analysis for the errors in this codebase.`,
+                            chatHistory: []
+                        };
+                        const regeneratedResult = await this.modelGateway.process(regenerateRequest);
+                        const regenerateCheck = this.outputGuardrail.validate(regeneratedResult.response);
+                        if (regenerateCheck.isValid) {
+                            rcaFinalResponse = regenerateCheck.redactedText || regeneratedResult.response;
+                        } else {
+                            throw new Error('RCA response blocked after regeneration');
+                        }
+                    } else {
+                        throw new Error(rcaOutputCheck.error || 'RCA output blocked');
+                    }
+                } else if (rcaOutputCheck.redactedText) {
+                    rcaFinalResponse = rcaOutputCheck.redactedText;
+                }
+                this.observability.endTrace(rcaOutputTraceId, 'success');
+                
+                // Parse RCA response
+                const rootCauseMatch = rcaFinalResponse.match(/rootcause:\s*(.+?)(?=solution:|$)/is);
+                const solutionMatch = rcaFinalResponse.match(/solution:\s*(.+?)$/is);
+                
+                const parsed = {
+                    rootCause: rootCauseMatch ? rootCauseMatch[1].trim() : 'Root cause analysis not available.',
+                    solution: solutionMatch ? solutionMatch[1].trim() : 'Solution steps not available.'
+                };
+                
+                // Format RCA response
+                let rcaCleaned = rcaFinalResponse;
+                rcaCleaned = rcaCleaned.replace(/https?:\/\/[^\s]+/gi, '').trim();
+                rcaCleaned = rcaCleaned.replace(/\b(here are some|references? related to|you may find|useful:?)\s*/gi, '').trim();
+                const formattedSources = this.formatSources(internalDocs, webDocs);
+                const elapsedMs = Date.now() - startTime;
+                
+                // Build codebase RCA template
+                const errorsByCategory = new Map<string, number>();
+                workspaceErrors.forEach(e => {
+                    const category = e.message.split(':')[0] || 'Other';
+                    errorsByCategory.set(category, (errorsByCategory.get(category) || 0) + 1);
+                });
+                
+                const rcaResponseText = this.buildCodebaseRcaTemplate(
+                    parsed,
+                    errorsByFile.size,
+                    totalErrors,
+                    totalWarnings,
+                    errorsByCategory,
+                    formattedSources,
+                    elapsedMs
+                );
+                
+                // Persist chat history
+                await this.externalMemory.storeChatMessage({ role: 'user', content: sanitized, timestamp: Date.now() });
+                await this.externalMemory.storeChatMessage({ role: 'assistant', content: rcaCleaned, timestamp: Date.now() });
+                
+                // Cache RCA response
+                this.cacheManager.set(sanitized, rcaCleaned);
+                
+                // Send RCA response
+                this.sendMessage({
+                    type: 'response',
+                    response: rcaResponseText,
+                    cached: false,
+                    sources: formattedSources,
+                    model: rcaResult?.model || null
+                });
+                
+                this.observability.recordLatency('rca_query_processing', elapsedMs);
+                this.observability.endTrace(traceId, 'success', { 
+                    responseLength: rcaCleaned.length,
+                    rcaMode: true,
+                    errorQuery: true,
+                    errorsFound: workspaceErrors.length
+                });
+                this.sendCacheStats();
+                this.updateStatusBar('ready');
+                return; // Exit early, RCA path complete
+            }
             
             if (errorDetection.detected && errorDetection.confidence > RCA_CONFIDENCE_THRESHOLD) {
                 this.outputChannel.logInfo(`[RCA] Error detected: ${errorDetection.category} (confidence: ${errorDetection.confidence})`);
@@ -1314,7 +1658,13 @@ export class RAGPanel {
             fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ragPanel.ts:1252',message:'before retrieval',data:{query:sanitized.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
             // #endregion
             const topK = vscode.workspace.getConfiguration('ragAgent').get<number>('topK', 5);
-            const internalDocs = await this.retriever.retrieveInternal(sanitized, topK);
+            let internalDocs = await this.retriever.retrieveInternal(sanitized, topK);
+            
+            // Merge codebase docs with regular internal docs (prioritize codebase)
+            if (codebaseDocs.length > 0) {
+                internalDocs = [...codebaseDocs, ...internalDocs];
+                this.outputChannel.logInfo(`[Codebase Query] Merged ${codebaseDocs.length} codebase docs with ${internalDocs.length - codebaseDocs.length} regular docs`);
+            }
             // #region agent log
             fetch('http://127.0.0.1:7243/ingest/8917821b-0802-4d8d-88ee-59c8f36c87a5',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ragPanel.ts:1256',message:'after internal retrieval',data:{internalDocsCount:internalDocs.length,elapsed:Date.now()-retrievalStart},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
             // #endregion
@@ -1372,7 +1722,7 @@ export class RAGPanel {
             // Context construction
             const contextTraceId = this.observability.startTrace('context_construction');
             const chatHistory = await this.externalMemory.getChatHistory(10);
-            const context = this.contextBuilder.buildContext(sanitized, internalDocs, webDocs, chatHistory);
+            const context = this.contextBuilder.buildContext(sanitized, internalDocs, webDocs, chatHistory, this.externalMemory);
             
             // Validate context quality for accuracy monitoring
             if (!this.contextBuilder.validateContextQuality(context, sanitized)) {
@@ -1398,10 +1748,31 @@ export class RAGPanel {
             this.observability.recordLatency('model_gateway', Date.now() - gatewayStart);
             this.observability.endTrace(gatewayTraceId, 'success', { model: gatewayResult.model });
 
+            // NEW: Ensure response contains information (guaranteed response system)
+            let finalResponse = gatewayResult.response;
+            const isEmptyResponse = !finalResponse || 
+                finalResponse.trim().length < 10 ||
+                /no (relevant )?information (found|available)/i.test(finalResponse) ||
+                /i (don't|do not) (have|know|find)/i.test(finalResponse);
+
+            if (isEmptyResponse && queryAnalysis.isCodebaseQuery && codebaseDocs.length > 0) {
+                // Build guaranteed response from codebase information
+                this.outputChannel.logInfo('[Guaranteed Response] Building response from codebase data');
+                
+                const guaranteedResponse = await this.buildGuaranteedCodebaseResponse(
+                    sanitized,
+                    codebaseDocs,
+                    queryAnalysis
+                );
+                
+                if (guaranteedResponse) {
+                    finalResponse = guaranteedResponse;
+                }
+            }
+
             // Output guardrail
             const outputTraceId = this.observability.startTrace('output_guardrail');
-            let finalResponse = gatewayResult.response;
-            const outputCheck = this.outputGuardrail.validate(gatewayResult.response);
+            const outputCheck = this.outputGuardrail.validate(finalResponse);
             if (!outputCheck.isValid) {
                 if (outputCheck.needsRegeneration) {
                     // Attempt regeneration by calling model gateway again with a safety prompt
@@ -1419,7 +1790,21 @@ export class RAGPanel {
                         this.observability.endTrace(outputTraceId, 'error', { error: 'Regeneration failed' });
                         throw new Error(regenerateCheck.error || 'Output blocked after regeneration');
                     }
-                    finalResponse = regenerateCheck.redactedText || regeneratedResult.response;
+                    let regeneratedFinalResponse = regenerateCheck.redactedText || regeneratedResult.response;
+                    
+                    // Check if regenerated response is empty and use guaranteed response
+                    if ((!regeneratedFinalResponse || regeneratedFinalResponse.trim().length < 10) && 
+                        queryAnalysis.isCodebaseQuery && codebaseDocs.length > 0) {
+                        const guaranteedResponse = await this.buildGuaranteedCodebaseResponse(
+                            sanitized,
+                            codebaseDocs,
+                            queryAnalysis
+                        );
+                        if (guaranteedResponse) {
+                            regeneratedFinalResponse = guaranteedResponse;
+                        }
+                    }
+                    finalResponse = regeneratedFinalResponse;
                     this.observability.recordFallback('output_regeneration');
                 } else {
                     this.observability.recordGuardrailReject('output', outputCheck.error || 'Blocked');
@@ -1506,16 +1891,37 @@ export class RAGPanel {
     }
 
     private async handleEmail(subject: string, body: string) {
-        this.outputChannel.logInfo(`Email send requested: ${subject}`);
+        this.outputChannel.logInfo(`[EMAIL] Email send requested: Subject="${subject}", Body length=${body.length}`);
+        
+        // Validate inputs
+        if (!subject || !subject.trim()) {
+            this.sendMessage({
+                type: 'emailStatus',
+                success: false,
+                message: 'Email subject is required'
+            });
+            return;
+        }
+        
+        if (!body || !body.trim()) {
+            this.sendMessage({
+                type: 'emailStatus',
+                success: false,
+                message: 'Email body is required'
+            });
+            return;
+        }
         
         try {
-            const result = await this.writeActions.sendEmail(subject, body);
+            const result = await this.writeActions.sendEmail(subject.trim(), body.trim());
+            this.outputChannel.logInfo(`[EMAIL] Email send result: ${result.success ? 'Success' : 'Failed'} - ${result.message}`);
             this.sendMessage({
                 type: 'emailStatus',
                 success: result.success,
                 message: result.message
             });
         } catch (error: any) {
+            this.outputChannel.logError(`[EMAIL] Email send error: ${error.message || error}`);
             this.sendMessage({
                 type: 'emailStatus',
                 success: false,
@@ -1587,6 +1993,345 @@ export class RAGPanel {
         return [hash % 101, (hash >> 3) % 97, (hash >> 5) % 89, (hash >> 7) % 83].map(v => v / 100);
     }
 
+    private async handleLogHelperSelectFiles(): Promise<void> {
+        const u = await vscode.window.showOpenDialog({
+            canSelectMany: true,
+            filters: { 'Log/Text': ['log', 'txt'] }
+        });
+        if (u && u.length > 0) {
+            this.sendMessage({ type: 'logHelperFilesSelected', paths: u.map(x => x.fsPath) });
+        }
+    }
+
+    private async handleLogHelperPatternAgent(logFiles: string[]): Promise<void> {
+        const res = await this.logHelperClient.patternAgent(logFiles);
+        this.sendMessage({ type: 'logHelperResult', result: res });
+    }
+
+    private async handleLogHelperMmm(lastError: string, persona: string): Promise<void> {
+        const res = await this.logHelperClient.mmm(lastError, persona);
+        if (typeof res === 'string') {
+            this.sendMessage({ type: 'logHelperResult', result: res });
+        } else {
+            const formatted = `=== MMM — Mirror / Mentor / Multiplier ===\n\nMirror: ${res.mirror}\nMentor: ${res.mentor}\nMultiplier: ${res.multiplier}`;
+            this.sendMessage({ type: 'logHelperResult', result: formatted });
+        }
+    }
+
+    private async handleLogHelperUserActions(logFiles: string[]): Promise<void> {
+        const res = await this.logHelperClient.userActions(logFiles);
+        this.sendMessage({ type: 'logHelperResult', result: res });
+    }
+
+    private async indexEntireCodebaseIfNeeded(): Promise<void> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        
+        try {
+            const config = vscode.workspace.getConfiguration('ragAgent');
+            const autoIndex = config.get<boolean>('codebaseAutoIndex', true);
+            
+            if (!autoIndex) {
+                this.outputChannel.logInfo('[Codebase Indexer] Auto-indexing disabled');
+                return;
+            }
+            
+            // Check if already indexed (check for index marker document)
+            const indexMarker = await this.externalMemory.getDocument('codebase-index-marker');
+            if (indexMarker && this.isIndexFresh(indexMarker)) {
+                this.outputChannel.logInfo('[Codebase Indexer] Codebase already indexed');
+                this.indexingStatus = 'complete';
+                return;
+            }
+            
+            this.indexingStatus = 'indexing';
+            this.outputChannel.logInfo('[Codebase Indexer] Starting comprehensive codebase indexing...');
+            this.updateStatusBar('processing');
+            
+            // Index entire codebase
+            const result = await this.comprehensiveIndexer.indexEntireCodebase(workspaceFolder.uri);
+            
+            // Store index marker
+            await this.externalMemory.storeDocument({
+                id: 'codebase-index-marker',
+                content: `Codebase indexed at ${new Date().toISOString()}`,
+                metadata: {
+                    source: 'system',
+                    type: 'index-marker',
+                    indexedFiles: result.indexedFiles,
+                    indexedDocuments: result.indexedDocuments,
+                    timestamp: result.timestamp
+                },
+                timestamp: Date.now()
+            });
+            
+            this.indexingStatus = 'complete';
+            this.outputChannel.logInfo(
+                `[Codebase Indexer] Indexed ${result.indexedDocuments} documents from ${result.indexedFiles} files`
+            );
+            this.updateStatusBar('ready');
+            
+            // Show notification
+            vscode.window.showInformationMessage(
+                `Codebase indexed: ${result.indexedDocuments} documents from ${result.indexedFiles} files`
+            );
+            
+        } catch (error: any) {
+            this.indexingStatus = 'failed';
+            this.outputChannel.logError(`[Codebase Indexer] Failed: ${error.message}`);
+            this.updateStatusBar('ready');
+            // Don't block - continue without codebase indexing
+        }
+    }
+
+    private isIndexFresh(marker: DocumentRecord): boolean {
+        // Consider index fresh if less than 1 hour old
+        const age = Date.now() - marker.timestamp;
+        return age < 3600000; // 1 hour
+    }
+
+    private setupCodebaseFileWatcher(): void {
+        if (!vscode.workspace.workspaceFolders?.[0]) return;
+
+        const fileWatcher = vscode.workspace.createFileSystemWatcher(
+            '**/*.{ts,js,tsx,jsx,py,java,go,rs,cpp,c,cs}'
+        );
+        
+        fileWatcher.onDidChange(async (uri) => {
+            // Debounce: wait 3 seconds after last change
+            if (this.codebaseIndexDebounceTimer) {
+                clearTimeout(this.codebaseIndexDebounceTimer);
+            }
+            
+            this.codebaseIndexDebounceTimer = setTimeout(async () => {
+                try {
+                    const docs = await this.comprehensiveIndexer.indexFile(uri);
+                    this.outputChannel.logInfo(
+                        `[Codebase Indexer] Updated index for ${uri.fsPath} (${docs.length} documents)`
+                    );
+                } catch (error: any) {
+                    this.outputChannel.logError(
+                        `[Codebase Indexer] Failed to update ${uri.fsPath}: ${error.message}`
+                    );
+                }
+            }, 3000);
+        }, null, this._disposables);
+        
+        fileWatcher.onDidCreate(async (uri) => {
+            try {
+                const docs = await this.comprehensiveIndexer.indexFile(uri);
+                this.outputChannel.logInfo(
+                    `[Codebase Indexer] Indexed new file ${uri.fsPath} (${docs.length} documents)`
+                );
+            } catch (error: any) {
+                this.outputChannel.logError(
+                    `[Codebase Indexer] Failed to index ${uri.fsPath}: ${error.message}`
+                );
+            }
+        }, null, this._disposables);
+        
+        fileWatcher.onDidDelete(async (uri) => {
+            try {
+                // Remove indexed documents for deleted file
+                await this.comprehensiveIndexer.removeFileIndex(uri);
+                this.outputChannel.logInfo(
+                    `[Codebase Indexer] Removed index for deleted file ${uri.fsPath}`
+                );
+            } catch (error: any) {
+                this.outputChannel.logError(
+                    `[Codebase Indexer] Failed to remove index for ${uri.fsPath}: ${error.message}`
+                );
+            }
+        }, null, this._disposables);
+        
+        this._disposables.push(fileWatcher);
+    }
+
+    private buildCodebaseFallbackDocument(): DocumentRecord {
+        return {
+            id: 'codebase-overview-fallback',
+            content: this.buildCodebaseOverviewContent(),
+            metadata: {
+                source: 'codebase',
+                type: 'overview',
+                filePath: 'workspace',
+                relativePath: 'workspace',
+                language: 'mixed'
+            },
+            timestamp: Date.now()
+        };
+    }
+
+    private buildCodebaseOverviewContent(): string {
+        const allCodebaseDocs = this.externalMemory.getCodebaseDocuments();
+        const fileCount = new Set(allCodebaseDocs.map(d => d.metadata?.filePath || d.metadata?.relativePath)).size;
+        const functionCount = allCodebaseDocs.filter(d => d.metadata?.type === 'function').length;
+        const classCount = allCodebaseDocs.filter(d => d.metadata?.type === 'class').length;
+        const interfaceCount = allCodebaseDocs.filter(d => d.metadata?.type === 'interface').length;
+
+        return `**Codebase Overview**
+
+Your codebase has been indexed with the following structure:
+- ${fileCount} files indexed
+- ${functionCount} functions
+- ${classCount} classes
+- ${interfaceCount} interfaces
+
+To get specific information about your codebase, try asking:
+- "What functions are in [filename]?"
+- "What classes are in [filename]?"
+- "Show me [filename]"
+- "How does [function/class] work?"
+- "Where is [function/class] defined?"
+- "What dependencies does [file] have?"
+
+The codebase is ready for comprehensive queries.`;
+    }
+
+    private async buildGuaranteedCodebaseResponse(
+        query: string,
+        codebaseDocs: DocumentRecord[],
+        queryAnalysis: QueryAnalysis
+    ): Promise<string> {
+        if (codebaseDocs.length === 0) {
+            // Build from codebase overview
+            return this.buildCodebaseOverviewResponse(query);
+        }
+        
+        // Build response from available codebase documents
+        const responseParts: string[] = [];
+        
+        responseParts.push(`Based on your codebase analysis:\n\n`);
+        
+        codebaseDocs.forEach((doc, idx) => {
+            const metadata = doc.metadata || {};
+            const filePath = metadata.relativePath || metadata.filePath || 'Unknown';
+            const type = metadata.type || 'code';
+            const name = metadata.functionName || metadata.className || metadata.interfaceName || '';
+            
+            responseParts.push(`**${idx + 1}. ${filePath}${name ? ` - ${name}` : ''}** (${type})`);
+            responseParts.push(doc.content);
+            responseParts.push('');
+        });
+        
+        return responseParts.join('\n');
+    }
+
+    private buildCodebaseOverviewResponse(query: string): string {
+        // Get codebase statistics
+        const allCodebaseDocs = this.externalMemory.getCodebaseDocuments();
+        
+        const fileCount = new Set(allCodebaseDocs.map(d => d.metadata?.filePath || d.metadata?.relativePath)).size;
+        const functionCount = allCodebaseDocs.filter(d => d.metadata?.type === 'function').length;
+        const classCount = allCodebaseDocs.filter(d => d.metadata?.type === 'class').length;
+        
+        return `**Codebase Overview**\n\n` +
+            `Your codebase contains:\n` +
+            `- ${fileCount} indexed files\n` +
+            `- ${functionCount} functions\n` +
+            `- ${classCount} classes\n\n` +
+            `To get specific information, try asking about:\n` +
+            `- Specific files: "What is in [filename]?"\n` +
+            `- Functions: "What functions are in [file]?"\n` +
+            `- Classes: "What classes are in [file]?"\n` +
+            `- Or run comprehensive analysis: "Analyze my codebase"`;
+    }
+
+    public async triggerComprehensiveIndexing(): Promise<IndexingResult> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            throw new Error('No workspace open');
+        }
+        
+        this.outputChannel.logInfo('[Codebase Indexer] Manual comprehensive indexing triggered');
+        this.updateStatusBar('processing');
+        
+        const result = await this.comprehensiveIndexer.indexEntireCodebase(workspaceFolder.uri);
+        
+        // Store index marker
+        await this.externalMemory.storeDocument({
+            id: 'codebase-index-marker',
+            content: `Codebase indexed at ${new Date().toISOString()}`,
+            metadata: {
+                source: 'system',
+                type: 'index-marker',
+                indexedFiles: result.indexedFiles,
+                indexedDocuments: result.indexedDocuments,
+                timestamp: result.timestamp
+            },
+            timestamp: Date.now()
+        });
+        
+        this.updateStatusBar('ready');
+        return result;
+    }
+
+    public async triggerComprehensiveAnalysis(): Promise<void> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            throw new Error('No workspace open');
+        }
+        
+        this.updateStatusBar('processing');
+        this.outputChannel.logInfo('[Codebase Analyzer] Starting comprehensive analysis...');
+        
+        const analysis = await this.codebaseAnalyzer.analyzeEntireCodebase(workspaceFolder.uri);
+        
+        // Format and send analysis results
+        const analysisReport = this.formatComprehensiveAnalysis(analysis);
+        
+        this.sendMessage({
+            type: 'response',
+            response: analysisReport,
+            cached: false,
+            sources: []
+        });
+        
+        this.updateStatusBar('ready');
+    }
+
+    private formatComprehensiveAnalysis(analysis: CodebaseAnalysis): string {
+        const parts: string[] = [];
+        
+        parts.push('# Comprehensive Codebase Analysis\n\n');
+        
+        // Structure
+        parts.push('## Structure Analysis\n');
+        parts.push(`- Entry Points: ${analysis.structure.entryPoints.length}`);
+        parts.push(`- Top-level Items: ${analysis.structure.fileTree.length}\n`);
+        
+        // Dependencies
+        parts.push('## Dependencies\n');
+        parts.push(`- External Packages: ${analysis.dependencies.externalPackages.length}`);
+        if (analysis.dependencies.externalPackages.length > 0) {
+            parts.push(`- Top packages: ${analysis.dependencies.externalPackages.slice(0, 10).join(', ')}\n`);
+        }
+        
+        // Architecture
+        parts.push('## Architecture\n');
+        parts.push(`- Architecture Style: ${analysis.architecture.architectureStyle}`);
+        parts.push(`- Layers: ${analysis.architecture.layers.length}`);
+        parts.push(`- Design Patterns: ${analysis.architecture.designPatterns.length}\n`);
+        
+        // Complexity
+        parts.push('## Complexity Analysis\n');
+        parts.push(`- Files Analyzed: ${analysis.complexity.fileComplexity.length}`);
+        if (analysis.complexity.fileComplexity.length > 0) {
+            const avgComplexity = analysis.complexity.fileComplexity.reduce((sum, f) => sum + f.cyclomaticComplexity, 0) / analysis.complexity.fileComplexity.length;
+            parts.push(`- Average Cyclomatic Complexity: ${avgComplexity.toFixed(2)}\n`);
+        }
+        
+        // Patterns
+        parts.push('## Patterns\n');
+        parts.push(`- Common Patterns: ${analysis.patterns.commonPatterns.length}`);
+        parts.push(`- Anti-patterns: ${analysis.patterns.antiPatterns.length}`);
+        parts.push(`- Code Smells: ${analysis.patterns.codeSmells.length}\n`);
+        
+        parts.push(`\n*Analysis completed at ${new Date(analysis.timestamp).toLocaleString()}*`);
+        
+        return parts.join('\n');
+    }
+
     private _update() {
         const webview = this._panel.webview;
         this._panel.webview.html = this._getHtmlForWebview(webview);
@@ -1621,6 +2366,7 @@ export class RAGPanel {
 
         // Get theme (respects ragAgent.theme setting)
         const themeClass = this._getThemeClass();
+        const logHelperEnabled = vscode.workspace.getConfiguration('ragAgent').get<boolean>('logHelperEnabled', false);
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -1791,6 +2537,22 @@ export class RAGPanel {
                 <div id="emailStatus" class="email-status"></div>
             </div>
         </div>
+        ${logHelperEnabled ? `
+        <div class="log-helper-section">
+            <h3 class="section-title">Log analysis</h3>
+            <button id="logHelperSelectFilesBtn" class="btn btn-secondary">Select log files</button>
+            <span id="logHelperFilesLabel" class="log-helper-label"></span>
+            <div style="margin-top: 8px;">
+                <button id="logHelperRunBtn" class="btn btn-primary">Run Pattern Agent</button>
+                <button id="logHelperUserActionsBtn" class="btn btn-primary" style="margin-left: 8px;">Show User Actions</button>
+            </div>
+            <div style="margin-top: 8px;">
+                <input type="text" id="logHelperMmmErrorInput" placeholder="Enter last error message for MMM" style="width: 300px; padding: 4px; margin-right: 8px;">
+                <button id="logHelperMmmBtn" class="btn btn-primary">Run MMM</button>
+            </div>
+            <pre id="logHelperOutput" class="log-helper-output"></pre>
+        </div>
+` : ''}
     </div>
 
     <script src="${scriptUri}"></script>

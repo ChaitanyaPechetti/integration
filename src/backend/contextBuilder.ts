@@ -58,7 +58,7 @@ export class ContextBuilder {
         return matchRatio >= 0.5; // At least 50% of query words must be in context
     }
 
-    buildContext(userInput: string, internalDocs: DocumentRecord[], webDocs: DocumentRecord[], chatHistory: ChatMessage[]): string {
+    buildContext(userInput: string, internalDocs: DocumentRecord[], webDocs: DocumentRecord[], chatHistory: ChatMessage[], externalMemory?: any): string {
         const relevanceGuide = [
             'CRITICAL: Use ONLY information that directly and explicitly answers the user question.',
             'STRICT ACCURACY: Every fact must be traceable to the context. No assumptions. No inferences.',
@@ -142,10 +142,41 @@ export class ContextBuilder {
         }
 
         if (uniqueInternalDocs.length > 0) {
-            context += 'Internal Knowledge:\n';
-            uniqueInternalDocs.forEach((doc, idx) => {
-                context += `[Internal ${idx + 1}]\n${doc.content}\n\n`;
-            });
+            // Separate codebase docs from other internal docs
+            const codebaseDocs = uniqueInternalDocs.filter(d => d.metadata?.source === 'codebase');
+            const otherDocs = uniqueInternalDocs.filter(d => d.metadata?.source !== 'codebase');
+            
+            // Prioritize codebase docs
+            if (codebaseDocs.length > 0) {
+                context += 'Codebase Information (from your code):\n';
+                codebaseDocs.forEach((doc, idx) => {
+                    const metadata = doc.metadata || {};
+                    const filePath = metadata.filePath || metadata.relativePath || 'Unknown file';
+                    const type = metadata.type || 'unknown';
+                    const lineInfo = metadata.line ? ` (line ${metadata.line})` : '';
+                    const nameInfo = metadata.functionName || metadata.className || metadata.interfaceName || '';
+                    const nameLabel = nameInfo ? ` - ${nameInfo}` : '';
+                    
+                    context += `[Codebase ${idx + 1}] ${filePath}${lineInfo}${nameLabel} (${type})\n`;
+                    context += `${doc.content}\n\n`;
+                });
+            }
+            
+            if (otherDocs.length > 0) {
+                context += 'Other Knowledge:\n';
+                otherDocs.forEach((doc, idx) => {
+                    context += `[Internal ${idx + 1}]\n${doc.content}\n\n`;
+                });
+            }
+        } else {
+            // GUARANTEE: If no internal docs, try to provide codebase overview
+            // This will be handled by guaranteed retriever, but we can add a note here
+            const allDocs = Array.from((externalMemory as any).documents?.values() || []);
+            const codebaseDocs = allDocs.filter((d: DocumentRecord) => d.metadata?.source === 'codebase');
+            if (codebaseDocs.length > 0) {
+                context += 'Codebase Overview:\n';
+                context += `Your codebase has ${codebaseDocs.length} indexed documents. Ask specific questions about your code.\n\n`;
+            }
         }
 
         context += `User Question: ${userInput}`;

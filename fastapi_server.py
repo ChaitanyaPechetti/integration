@@ -7,6 +7,68 @@ import httpx
 import json
 import os
 import re
+import sys
+
+def get_log_helper_source_path():
+    """Get path to ai-log-helper-gui source code.
+    
+    Priority order:
+    1. Environment variable LOG_HELPER_SOURCE_PATH
+    2. VS Code setting ragAgent.logHelperSourcePath (if available)
+    3. Relative path from Rag-Experiements root (../ai-log-helper-gui/src)
+    4. Fallback to local python/ folder
+    
+    Returns:
+        str: Path to source code directory
+    """
+    # Priority 1: Environment variable
+    env_path = os.getenv('LOG_HELPER_SOURCE_PATH')
+    if env_path:
+        env_path = os.path.abspath(env_path)
+        analyzer_path = os.path.join(env_path, 'analyzer.py')
+        if os.path.exists(analyzer_path):
+            return env_path
+    
+    # Priority 2: VS Code setting (if available via environment)
+    # Note: VS Code settings are not directly accessible from Python
+    # This would require extension to pass it via environment variable
+    vscode_setting_path = os.getenv('VSCODE_LOG_HELPER_SOURCE_PATH')
+    if vscode_setting_path:
+        vscode_setting_path = os.path.abspath(vscode_setting_path)
+        analyzer_path = os.path.join(vscode_setting_path, 'analyzer.py')
+        if os.path.exists(analyzer_path):
+            return vscode_setting_path
+    
+    # Priority 3: Relative path (ai-log-helper-gui at same level as Rag-Experiements)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    relative_path = os.path.join(parent_dir, 'ai-log-helper-gui', 'src')
+    if os.path.exists(os.path.join(relative_path, 'analyzer.py')):
+        return relative_path
+    
+    # Priority 4: Fallback to local python/ folder
+    local_python = os.path.join(current_dir, 'python')
+    if os.path.exists(os.path.join(local_python, 'analyzer.py')):
+        return local_python
+    
+    # Error: no source found
+    raise FileNotFoundError(
+        "ai-log-helper-gui source not found. "
+        "Options:\n"
+        "1. Set environment variable: LOG_HELPER_SOURCE_PATH\n"
+        "2. Place ai-log-helper-gui at: ../ai-log-helper-gui/src\n"
+        "3. Ensure python/ folder exists with analyzer.py"
+    )
+
+_log_helper_path = get_log_helper_source_path()
+if _log_helper_path not in sys.path:
+    sys.path.insert(0, _log_helper_path)
+
+# Log which source path is being used
+print(f"[Log Helper] Using source path: {_log_helper_path}")
+
+from analyzer import run_pattern_agent_once, analyze_user_actions
+from mmm import generate_mmm
 
 app = FastAPI(title="Zeroui AI Agent FastAPI Server")
 
@@ -353,6 +415,42 @@ async def get_responses_status():
             "ollama_connected": False,
             "error": str(e)
         }
+
+class LogHelperPatternAgentRequest(BaseModel):
+    log_files: List[str]
+
+class LogHelperMmmRequest(BaseModel):
+    last_error: str
+    persona: Optional[str] = "developer"
+
+class LogHelperUserActionsRequest(BaseModel):
+    log_files: List[str]
+
+DEFAULT_LOG_MODEL = os.getenv("DEFAULT_LOG_MODEL", "llama3")
+
+@app.post("/api/log-helper/pattern-agent")
+def log_helper_pattern_agent(req: LogHelperPatternAgentRequest):
+    try:
+        r = run_pattern_agent_once(req.log_files, ollama_url=OLLAMA_BASE_URL, model=DEFAULT_LOG_MODEL)
+        return {"result": r}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/log-helper/mmm")
+def log_helper_mmm(req: LogHelperMmmRequest):
+    try:
+        m, me, mu = generate_mmm(req.last_error, persona=req.persona or "developer", ollama_url=OLLAMA_BASE_URL, model=DEFAULT_LOG_MODEL)
+        return {"mirror": m, "mentor": me, "multiplier": mu}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/log-helper/user-actions")
+def log_helper_user_actions(req: LogHelperUserActionsRequest):
+    try:
+        r = analyze_user_actions(req.log_files, ollama_url=OLLAMA_BASE_URL, model=DEFAULT_LOG_MODEL)
+        return {"result": r}
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/")
 async def root():

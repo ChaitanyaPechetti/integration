@@ -28,6 +28,11 @@
     const submitBtn = document.getElementById('submitBtn');
     const stopBtn = document.getElementById('stopBtn');
     const clearChatBtn = document.getElementById('clearChatBtn');
+    
+    // Verify critical elements exist
+    if (!clearChatBtn) {
+        console.error('Clear Chat button not found in DOM');
+    }
     const questionBtns = document.querySelectorAll('.question-btn');
     const refreshCacheBtn = document.getElementById('refreshCacheBtn');
     const clearCacheBtn = document.getElementById('clearCacheBtn');
@@ -35,6 +40,11 @@
     const emailSubject = document.getElementById('emailSubject');
     const emailBody = document.getElementById('emailBody');
     const emailStatus = document.getElementById('emailStatus');
+    
+    // Verify email elements exist
+    if (!sendEmailBtn || !emailSubject || !emailBody || !emailStatus) {
+        console.error('Email functionality elements not found in DOM');
+    }
     const securityHeader = document.getElementById('securityHeader');
     const securityContent = document.getElementById('securityContent');
     const shareBtn = document.getElementById('shareBtn');
@@ -44,6 +54,12 @@
     // Initialize
     updateCacheStats();
     setupEventListeners();
+    
+    // Ensure Clear Chat button is always enabled (like Cursor IDE)
+    if (clearChatBtn) {
+        clearChatBtn.disabled = false;
+        isProcessing = false;
+    }
 
     function setupEventListeners() {
         // Submit query
@@ -58,20 +74,26 @@
         // Stop query
         stopBtn.addEventListener('click', handleStop);
 
-        // Clear chat
-        clearChatBtn.addEventListener('click', () => {
-            // Only allow clearing after response is complete
-            if (isProcessing) {
-                alert('Please wait for the response to complete before clearing chat.');
-                return;
-            }
-            
-            if (confirm('Are you sure you want to clear the chat?')) {
+        // Clear chat - works like Cursor IDE: instant, no restrictions
+        if (clearChatBtn) {
+            clearChatBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Stop any ongoing processing first (like Cursor IDE)
+                if (isProcessing) {
+                    // Stop the current query
+                    vscode.postMessage({ type: 'stop' });
+                }
+                
                 // Remove thinking indicator if visible
                 removeThinkingIndicator();
                 
-                // Clear chat history (this clears both query and response)
+                // Clear chat history immediately (this clears both query and response)
                 chatHistory = [];
+                
+                // Reset processing state
+                isProcessing = false;
                 
                 // Reset input and button states
                 queryInput.disabled = false;
@@ -81,13 +103,20 @@
                 stopBtn.style.display = 'none';
                 stopBtn.disabled = true;
                 
-                // Render empty chat state
+                // Enable clear chat button (should already be enabled, but ensure it)
+                if (clearChatBtn) {
+                    clearChatBtn.disabled = false;
+                }
+                
+                // Render empty chat state immediately
                 renderChat();
                 
                 // Notify backend to clear chat history
                 vscode.postMessage({ type: 'clearChat' });
-            }
-        });
+            });
+        } else {
+            console.error('Cannot attach event listener: Clear Chat button not found');
+        }
 
         // Example questions
         questionBtns.forEach(btn => {
@@ -110,7 +139,11 @@
         });
 
         // Email
-        sendEmailBtn.addEventListener('click', handleSendEmail);
+        if (sendEmailBtn && emailSubject && emailBody && emailStatus) {
+            sendEmailBtn.addEventListener('click', handleSendEmail);
+        } else {
+            console.error('Cannot attach email event listener: Email elements not found');
+        }
 
         // Security accordion
         securityHeader.addEventListener('click', () => {
@@ -131,6 +164,51 @@
         refreshBtn.addEventListener('click', () => {
             vscode.postMessage({ type: 'refresh' });
         });
+
+        // Log Helper
+        var logHelperSelectFilesBtn = document.getElementById('logHelperSelectFilesBtn');
+        if (logHelperSelectFilesBtn) {
+            logHelperSelectFilesBtn.addEventListener('click', () => {
+                vscode.postMessage({ type: 'logHelperSelectFiles' });
+            });
+        }
+        var logHelperRunBtn = document.getElementById('logHelperRunBtn');
+        if (logHelperRunBtn) {
+            logHelperRunBtn.addEventListener('click', () => {
+                var paths = window._logHelperPaths || [];
+                if (paths.length === 0) return;
+                logHelperRunBtn.disabled = true;
+                var logHelperOutput = document.getElementById('logHelperOutput');
+                if (logHelperOutput) logHelperOutput.textContent = 'Running...';
+                vscode.postMessage({ type: 'logHelperPatternAgent', logFiles: paths });
+            });
+        }
+        var logHelperUserActionsBtn = document.getElementById('logHelperUserActionsBtn');
+        if (logHelperUserActionsBtn) {
+            logHelperUserActionsBtn.addEventListener('click', () => {
+                var paths = window._logHelperPaths || [];
+                if (paths.length === 0) return;
+                logHelperUserActionsBtn.disabled = true;
+                var logHelperOutput = document.getElementById('logHelperOutput');
+                if (logHelperOutput) logHelperOutput.textContent = 'Running...';
+                vscode.postMessage({ type: 'logHelperUserActions', logFiles: paths });
+            });
+        }
+        var logHelperMmmBtn = document.getElementById('logHelperMmmBtn');
+        if (logHelperMmmBtn) {
+            logHelperMmmBtn.addEventListener('click', () => {
+                var errorInput = document.getElementById('logHelperMmmErrorInput');
+                var lastError = errorInput ? errorInput.value.trim() : '';
+                if (!lastError) {
+                    alert('Please enter an error message for MMM analysis');
+                    return;
+                }
+                logHelperMmmBtn.disabled = true;
+                var logHelperOutput = document.getElementById('logHelperOutput');
+                if (logHelperOutput) logHelperOutput.textContent = 'Running...';
+                vscode.postMessage({ type: 'logHelperMmm', lastError: lastError, persona: 'developer' });
+            });
+        }
     }
 
     function renderRepoAnalysis(summary, timestamp) {
@@ -182,7 +260,7 @@
 
         // Set processing state
         isProcessing = true;
-        clearChatBtn.disabled = true;  // Disable clear button during processing
+        // Clear Chat button remains enabled (like Cursor IDE)
 
         // Add user message to chat
         addMessage('user', query);
@@ -252,6 +330,12 @@
     }
 
     function handleSendEmail() {
+        // Verify elements exist
+        if (!emailSubject || !emailBody || !emailStatus || !sendEmailBtn) {
+            console.error('Email elements not available');
+            return;
+        }
+        
         const subject = emailSubject.value.trim();
         const body = emailBody.value.trim();
 
@@ -261,11 +345,13 @@
             return;
         }
 
+        // Disable button and show loading state
         sendEmailBtn.disabled = true;
-        sendEmailBtn.textContent = 'Sending...';
+        sendEmailBtn.innerHTML = '<span>✉️</span> Sending...';
         emailStatus.textContent = '';
         emailStatus.className = 'email-status';
 
+        // Send email request to backend
         vscode.postMessage({
             type: 'sendEmail',
             subject: subject,
@@ -455,9 +541,8 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                // Response complete - enable clear chat button
+                // Response complete
                 isProcessing = false;
-                clearChatBtn.disabled = false;
                 break;
 
             case 'error':
@@ -467,9 +552,8 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                // Response complete (error) - enable clear chat button
+                // Response complete (error)
                 isProcessing = false;
-                clearChatBtn.disabled = false;
                 break;
 
             case 'stopped':
@@ -479,9 +563,8 @@
                 submitBtn.disabled = false;
                 submitBtn.style.display = 'flex';
                 stopBtn.style.display = 'none';
-                // Response complete (stopped) - enable clear chat button
+                // Response complete (stopped)
                 isProcessing = false;
-                clearChatBtn.disabled = false;
                 break;
 
             case 'cacheStatsUpdate':
@@ -543,14 +626,33 @@
                 break;
 
             case 'emailStatus':
-                sendEmailBtn.disabled = false;
-                sendEmailBtn.innerHTML = '<span>✉️</span> Send Email';
-                emailStatus.textContent = message.message;
-                emailStatus.className = `email-status ${message.success ? 'success' : 'error'}`;
-                if (message.success) {
-                    emailSubject.value = '';
-                    emailBody.value = '';
+                if (sendEmailBtn && emailStatus) {
+                    sendEmailBtn.disabled = false;
+                    sendEmailBtn.innerHTML = '<span>✉️</span> Send Email';
+                    emailStatus.textContent = message.message;
+                    emailStatus.className = `email-status ${message.success ? 'success' : 'error'}`;
+                    if (message.success && emailSubject && emailBody) {
+                        emailSubject.value = '';
+                        emailBody.value = '';
+                    }
                 }
+                break;
+
+            case 'logHelperFilesSelected':
+                window._logHelperPaths = message.paths || [];
+                var logHelperFilesLabel = document.getElementById('logHelperFilesLabel');
+                if (logHelperFilesLabel) logHelperFilesLabel.textContent = (window._logHelperPaths.length) + ' file(s) selected';
+                break;
+
+            case 'logHelperResult':
+                var logHelperOutput = document.getElementById('logHelperOutput');
+                if (logHelperOutput) logHelperOutput.textContent = message.result || '';
+                var logHelperRunBtn = document.getElementById('logHelperRunBtn');
+                if (logHelperRunBtn) logHelperRunBtn.disabled = false;
+                var logHelperUserActionsBtn = document.getElementById('logHelperUserActionsBtn');
+                if (logHelperUserActionsBtn) logHelperUserActionsBtn.disabled = false;
+                var logHelperMmmBtn = document.getElementById('logHelperMmmBtn');
+                if (logHelperMmmBtn) logHelperMmmBtn.disabled = false;
                 break;
         }
     });

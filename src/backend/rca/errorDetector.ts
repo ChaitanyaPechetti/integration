@@ -215,6 +215,57 @@ export class ErrorDetector {
         };
     }
 
+    /**
+     * Detect if a user query is asking about errors in the repository
+     * (not just an error message, but a question about errors)
+     */
+    detectErrorQuery(query: string): ErrorDetectionResult {
+        const normalized = query.trim().toLowerCase();
+        
+        // Patterns for queries asking about errors
+        const errorQueryPatterns = [
+            /what.*error/i,
+            /what.*wrong/i,
+            /what.*problem/i,
+            /show.*error/i,
+            /list.*error/i,
+            /find.*error/i,
+            /analyze.*error/i,
+            /check.*error/i,
+            /scan.*error/i,
+            /detect.*error/i,
+            /any.*error/i,
+            /errors?.*in.*(repo|codebase|code|project|workspace)/i,
+            /errors?.*my.*(repo|codebase|code|project|workspace)/i,
+            /what.*errors?/i,
+            /where.*errors?/i,
+            /how.*many.*errors?/i,
+            /analyze.*codebase/i,
+            /analyze.*repo/i,
+            /codebase.*error/i,
+            /repo.*error/i,
+            /problems?.*in.*(repo|codebase|code|project|workspace)/i,
+            /issues?.*in.*(repo|codebase|code|project|workspace)/i,
+            /bugs?.*in.*(repo|codebase|code|project|workspace)/i
+        ];
+        
+        const isErrorQuery = errorQueryPatterns.some(pattern => pattern.test(normalized));
+        
+        if (isErrorQuery) {
+            return {
+                detected: true,
+                category: 'error_query',
+                severity: 'medium',
+                confidence: 0.8
+            };
+        }
+        
+        return {
+            detected: false,
+            confidence: 0
+        };
+    }
+
     getErrorPatterns(): ErrorPattern[] {
         return this.errorPatterns;
     }

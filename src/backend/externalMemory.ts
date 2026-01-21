@@ -558,6 +558,19 @@ export class ExternalMemory {
         this.documents.set(doc.id, doc);
     }
 
+    async getDocument(id: string): Promise<DocumentRecord | undefined> {
+        return this.documents.get(id);
+    }
+
+    getAllDocuments(): DocumentRecord[] {
+        return Array.from(this.documents.values());
+    }
+
+    getCodebaseDocuments(): DocumentRecord[] {
+        return Array.from(this.documents.values())
+            .filter(doc => doc.metadata?.source === 'codebase');
+    }
+
     async storeChatMessage(message: ChatMessage): Promise<void> {
         this.chatHistory.push(message);
         if (this.chatHistory.length > this.maxChatHistory) {

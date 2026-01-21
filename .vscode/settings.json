@@ -11,6 +11,7 @@
     },
     "ragAgent.googleApiKey": "AIzaSyBf57C0gNKrrPSj6_ca4UDn0LQoOAhR7W8",
     "ragAgent.googleCseId": "73cf9050a00e54311",
-    "ragAgent.enableWebSearch": true
+    "ragAgent.enableWebSearch": true,
+    "ragAgent.logHelperEnabled": true
 }
 

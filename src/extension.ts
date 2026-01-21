@@ -41,6 +41,7 @@ import * as vscode from 'vscode';
 import { RAGPanel } from './webview/ragPanel';
 import { CacheManager } from './utils/cacheManager';
 import { OutputChannel } from './utils/outputChannel';
+import { FileLogger } from './utils/fileLogger';
 import { ServerManager } from './services/serverManager';
 import { RepoAnalyzer } from './services/repoAnalyzer';
 import { ErrorDetector } from './backend/rca/errorDetector';
@@ -53,6 +54,7 @@ let ragPanel: RAGPanel | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let cacheManager: CacheManager;
 let outputChannel: OutputChannel;
+let fileLogger: FileLogger | undefined;
 let zerouiOutputChannel: vscode.OutputChannel | undefined;
 let diagnostics: vscode.DiagnosticCollection | undefined;
 let fileWatcher: vscode.FileSystemWatcher | undefined;
@@ -87,6 +89,15 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel = new OutputChannel();
     diagnostics = vscode.languages.createDiagnosticCollection('ragAgentLint');
     context.subscriptions.push(diagnostics);
+
+    // Initialize file logger for automatic terminal error logging
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+        fileLogger = new FileLogger(workspaceFolder);
+        context.subscriptions.push({
+            dispose: () => fileLogger?.dispose()
+        });
+    }
 
     // Initialize Zeroui AI Agent components (optional)
     const zerouiConfig = vscode.workspace.getConfiguration('ragAgent');
@@ -205,6 +216,79 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('workbench.action.openSettings', '@ext:rag-inventory-assistant');
     });
 
+    const showErrorLogCommand = vscode.commands.registerCommand('rag.showErrorLog', () => {
+        if (fileLogger) {
+            fileLogger.showLogFile();
+        } else {
+            vscode.window.showErrorMessage('Error logger not initialized. Please reload the window.');
+        }
+    });
+
+    const clearErrorLogCommand = vscode.commands.registerCommand('rag.clearErrorLog', async () => {
+        if (fileLogger) {
+            const logPath = fileLogger.getLogFilePath();
+            const confirm = await vscode.window.showWarningMessage(
+                'Clear all error logs? This action cannot be undone.',
+                'Yes', 'No'
+            );
+
+            if (confirm === 'Yes') {
+                try {
+                    const fs = require('fs');
+                    const header = `=== TERMINAL ERRORS LOG ===\nCleared: ${new Date().toISOString()}\nWorkspace: ${vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown'}\n\n`;
+                    fs.writeFileSync(logPath, header, 'utf8');
+                    vscode.window.showInformationMessage('Error log cleared successfully.');
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to clear error log: ${error}`);
+                }
+            }
+        } else {
+            vscode.window.showErrorMessage('Error logger not initialized. Please reload the window.');
+        }
+    });
+
+    const indexCodebaseCommand = vscode.commands.registerCommand('rag.indexCodebase', async () => {
+        const panel = RAGPanel.getCurrentPanel();
+        if (!panel) {
+            vscode.window.showWarningMessage('Please open RAG Agent panel first');
+            return;
+        }
+        
+        try {
+            const result = await panel.triggerComprehensiveIndexing();
+            vscode.window.showInformationMessage(
+                `Codebase indexed: ${result.indexedDocuments} documents from ${result.indexedFiles} files`
+            );
+        } catch (err: any) {
+            outputChannel.logError(`[Index Codebase] Failed: ${err.message}`);
+            vscode.window.showErrorMessage(`Codebase indexing failed: ${err.message}`);
+        }
+    });
+
+    const analyzeCodebaseComprehensiveCommand = vscode.commands.registerCommand('rag.analyzeCodebaseComprehensive', async () => {
+        const panel = RAGPanel.getCurrentPanel();
+        if (!panel && extensionContext && updateStatusBarFn) {
+            RAGPanel.createOrShow(extensionContext.extensionUri, cacheManager, outputChannel, updateStatusBarFn);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const newPanel = RAGPanel.getCurrentPanel();
+            if (newPanel) {
+                try {
+                    await newPanel.triggerComprehensiveAnalysis();
+                } catch (err: any) {
+                    outputChannel.logError(`[Comprehensive Analysis] Failed: ${err.message}`);
+                    vscode.window.showErrorMessage(`Analysis failed: ${err.message}`);
+                }
+            }
+        } else if (panel) {
+            try {
+                await panel.triggerComprehensiveAnalysis();
+            } catch (err: any) {
+                outputChannel.logError(`[Comprehensive Analysis] Failed: ${err.message}`);
+                vscode.window.showErrorMessage(`Analysis failed: ${err.message}`);
+            }
+        }
+    });
+
     context.subscriptions.push(
         openPanelCommand,
         closePanelCommand,
@@ -214,7 +298,11 @@ export function activate(context: vscode.ExtensionContext) {
         showOutputCommand,
         showProblemsCommand,
         analyzeCodebaseCommand,
-        openSettingsCommand
+        openSettingsCommand,
+        showErrorLogCommand,
+        clearErrorLogCommand,
+        indexCodebaseCommand,
+        analyzeCodebaseComprehensiveCommand
     );
 
     // Continuous error monitoring setup
